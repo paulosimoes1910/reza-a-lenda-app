@@ -904,9 +904,10 @@ export default function App() {
     
     const handleLogout = () => {
         signOut(auth).then(() => {
+            // Limpa o estado do usuário explicitamente
+            setUser(null); 
             // O listener onAuthStateChanged vai cuidar de logar anonimamente
-            // e atualizar o estado 'user', o que vai mudar isLoggedIn para false.
-            // Apenas precisamos garantir que o usuário seja redirecionado.
+            // e atualizar o estado 'user', mas fazemos isso para uma resposta mais rápida.
             setActiveTab('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
@@ -931,7 +932,6 @@ export default function App() {
         
         // Se o admin estiver em uma aba pública, ela será renderizada.
         // Se um usuário público tentar acessar uma aba de admin, nada será renderizado.
-        // O ideal é o menu nem mostrar essas abas para o público.
         
         // Fallback final: se nada corresponder, mostre a tela de pagamentos
         return <PaymentControlList db={db} userId={userId} />;
