@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, setDoc, query, orderBy, writeBatch, where } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import * as Tone from 'tone';
 
 // --- Ícones (SVG) ---
@@ -128,7 +128,7 @@ const Home = ({ db, userId }) => {
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
                         <h2 className="text-2xl font-semibold text-gray-700 mb-3">Seu ID de Usuário</h2>
-                        <p className="text-md text-gray-500 mb-4">Compartilhe este ID com seus colegas de time para acessarem os mesmos dados:</p>
+                        <p className="text-md text-gray-500 mb-4">Este é o seu ID de administrador permanente:</p>
                         <p className="text-lg font-mono bg-gray-100 p-3 rounded-md text-gray-800 break-all">{userId || 'Carregando...'}</p>
                     </div>
                 </>
@@ -866,72 +866,73 @@ const TeamDivision = ({ db, userId }) => {
 // --- Componente Principal App ---
 export default function App() {
     const [activeTab, setActiveTab] = useState('Pagamentos');
-    const [userId, setUserId] = useState(null);
+    const [user, setUser] = useState(null); // Armazena o objeto de usuário completo
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
+    // Deriva o estado de login e o ID do usuário a partir do objeto 'user'
+    const isLoggedIn = user && !user.isAnonymous;
+    const userId = user ? user.uid : null;
+
     useEffect(() => {
-        const authListener = onAuthStateChanged(auth, async (user) => {
+        const authListener = onAuthStateChanged(auth, (user) => {
             if (user) {
-                setUserId(user.uid);
-                setIsAuthReady(true);
+                // Usuário está logado (seja anonimamente ou com e-mail)
+                setUser(user);
             } else {
-                try {
-                    // Para um app standalone, sempre usamos o login anônimo como padrão
-                    await signInAnonymously(auth);
-                } catch (error) {
-                    console.error("Authentication Error:", error);
-                    // Como fallback, gera um ID local, mas o ideal é o Firebase Auth funcionar
-                    setUserId(crypto.randomUUID()); 
-                    setIsAuthReady(true);
-                }
+                // Usuário deslogou, então logamos anonimamente para o acesso público
+                signInAnonymously(auth).catch(error => console.error("Erro no login anônimo:", error));
             }
+            setIsAuthReady(true);
         });
 
         return () => authListener();
     }, []);
 
-    const handleLogin = (username, password) => {
-        // ATENÇÃO: Login e senha hardcoded não é seguro para produção.
-        // Considere usar o Firebase Authentication com email/senha.
-        if (username === 'Admin' && password === 'Rezaalenda') {
-            setIsLoggedIn(true);
+    const handleLogin = async (email, password) => {
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
             setIsLoginModalOpen(false);
             setActiveTab('Home');
-            return true;
+            return { success: true };
+        } catch (error) {
+            console.error("Erro de login:", error);
+            return { success: false, message: 'E-mail ou senha inválidos.' };
         }
-        return false;
     };
     
     const handleLogout = () => {
-        setIsLoggedIn(false);
-        setActiveTab('Pagamentos');
+        signOut(auth).then(() => {
+            // O listener onAuthStateChanged vai cuidar de logar anonimamente
+            setActiveTab('Pagamentos');
+        }).catch(error => console.error("Erro no logout:", error));
     };
 
     const renderContent = () => {
         if (!isAuthReady) {
             return <div className="flex justify-center items-center h-full"><p>Autenticando...</p></div>;
         }
-        switch (activeTab) {
-            case 'Home':
-                return isLoggedIn ? <Home db={db} userId={userId} /> : <PaymentControlList db={db} userId={userId} />;
-            case 'Cadastros':
-                return isLoggedIn ? <PlayerRegistration db={db} userId={userId} /> : null;
-            case 'Jogadores':
-                return isLoggedIn ? <PlayerList db={db} userId={userId} /> : null;
-            case 'Pagamentos':
-                return <PaymentControlList db={db} userId={userId} />;
-            case 'Divisão de Times':
-                return <TeamDivision db={db} userId={userId} />;
-            case 'Compartilhar Pagamento':
-                return isLoggedIn ? <SharePayment db={db} userId={userId} /> : null;
-            case 'Cronômetro':
-                return <Stopwatch />;
-            default:
-                return <PaymentControlList db={db} userId={userId} />;
+
+        // Rotas de Administrador
+        if (isLoggedIn) {
+            if (activeTab === 'Home') return <Home db={db} userId={userId} />;
+            if (activeTab === 'Cadastros') return <PlayerRegistration db={db} userId={userId} />;
+            if (activeTab === 'Jogadores') return <PlayerList db={db} userId={userId} />;
+            if (activeTab === 'Compartilhar Pagamento') return <SharePayment db={db} userId={userId} />;
         }
+
+        // Rotas Públicas (e padrão para não logado)
+        if (activeTab === 'Pagamentos') return <PaymentControlList db={db} userId={userId} />;
+        if (activeTab === 'Divisão de Times') return <TeamDivision db={db} userId={userId} />;
+        if (activeTab === 'Cronômetro') return <Stopwatch />;
+        
+        // Se o admin estiver em uma aba pública, ela será renderizada.
+        // Se um usuário público tentar acessar uma aba de admin, nada será renderizado.
+        // O ideal é o menu nem mostrar essas abas para o público.
+        
+        // Fallback final: se nada corresponder, mostre a tela de pagamentos
+        return <PaymentControlList db={db} userId={userId} />;
     };
 
     const MenuItem = ({ tabName, icon }) => (
@@ -1002,17 +1003,18 @@ export default function App() {
 
 // --- Componente Modal de Login ---
 const LoginModal = ({ onLogin, onClose }) => {
-    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const modalRef = useRef(null);
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        const success = onLogin(username, password);
-        if (!success) {
-            setError('Login ou senha inválidos.');
+        setError(''); // Limpa o erro anterior
+        const result = await onLogin(email, password);
+        if (!result.success) {
+            setError(result.message || 'Ocorreu um erro.');
         }
     };
     
@@ -1034,7 +1036,7 @@ const LoginModal = ({ onLogin, onClose }) => {
                 <h3 className="text-xl font-bold mb-4 text-center">Login de Administrador</h3>
                 <form onSubmit={handleSubmit}>
                     <div className="space-y-4">
-                        <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Usuário" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
+                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
                         <div className="relative">
                             <input type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Senha" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
                             <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500">
