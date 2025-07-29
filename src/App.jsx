@@ -127,8 +127,8 @@ const Home = ({ db, userId }) => {
                         </button>
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-                        <h2 className="text-2xl font-semibold text-gray-700 mb-3">Seu ID de Usuário</h2>
-                        <p className="text-md text-gray-500 mb-4">Este é o seu ID de administrador permanente:</p>
+                        <h2 className="text-2xl font-semibold text-gray-700 mb-3">Seu ID de Administrador</h2>
+                        <p className="text-md text-gray-500 mb-4">Use este ID permanente nas regras de segurança do Firebase:</p>
                         <p className="text-lg font-mono bg-gray-100 p-3 rounded-md text-gray-800 break-all">{userId || 'Carregando...'}</p>
                     </div>
                 </>
@@ -905,6 +905,8 @@ export default function App() {
     const handleLogout = () => {
         signOut(auth).then(() => {
             // O listener onAuthStateChanged vai cuidar de logar anonimamente
+            // e atualizar o estado 'user', o que vai mudar isLoggedIn para false.
+            // Apenas precisamos garantir que o usuário seja redirecionado.
             setActiveTab('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
