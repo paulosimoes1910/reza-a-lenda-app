@@ -1,0 +1,5 @@
+# Arquivos de ambiente - Contém chaves secretas!
+.env.local
+
+# Dependências do Node
+node_modules
