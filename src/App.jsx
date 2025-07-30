@@ -11,6 +11,7 @@ const UserPlusIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" he
 const DollarSignIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>;
 const TimerIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="10" y1="2" x2="14" y2="2"></line><line x1="12" y1="18" x2="12" y2="22"></line><path d="M12 2a10 10 0 1 0 10 10c0-4.42-2.68-8.22-6.34-9.66"></path><path d="M12 6a6 6 0 1 0 6 6 6 6 0 0 0-6-6z"></path><path d="M12 8v4l2 1"></path></svg>;
 const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>;
 const MenuIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>;
 const XIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
 const WhatsAppIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.487 5.235 3.487 8.413 0 6.557-5.338 11.892-11.894 11.892-1.99 0-3.903-.52-5.614-1.474l-6.238 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.886-.001 2.267.655 4.398 1.804 6.166l-1.225 4.429 4.554-1.204zM9.354 8.014c-.197-.299-.442-.498-.72-.498-.266 0-.533.2-.732.498-.198.299-.798 1.254-.798 2.45 0 1.198.81 2.828 1.25 3.228.439.401 1.877 2.65 4.632 3.787 2.755 1.137 2.755.768 3.248.713.493-.054 1.58-.643 1.804-1.266.225-.623.225-1.153.16-1.266-.062-.113-.224-.17-.48-.299-.256-.129-1.58-.768-1.824-.867-.244-.099-.422-.149-.599.149-.178.299-.693.867-.849 1.017-.156.149-.313.169-.48.02-.167-.149-.713-1.04-1.35-1.666-.995-1.108-1.39-1.266-1.644-1.515-.254-.249-.01-1.017.149-1.266.158-.249.349-.417.498-.567.149-.149.198-.249.298-.416.1-.167.05-.317-.025-.467-.075-.149-.693-1.665-.942-2.248z"/></svg>;
@@ -257,6 +258,7 @@ const PlayerList = ({ db, userId }) => {
     const [singlePlayerName, setSinglePlayerName] = useState('');
     const [loading, setLoading] = useState(true);
     const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+    const [playerToEdit, setPlayerToEdit] = useState(null);
     const gamePlayersCollectionPath = "game_players";
     const contactsCollectionPath = "contacts";
 
@@ -331,9 +333,30 @@ const PlayerList = ({ db, userId }) => {
         setIsClearModalOpen(false);
     };
 
+    const handleUpdatePlayerName = async (playerId, newName) => {
+        const formattedName = capitalizeFullName(newName);
+        if (!formattedName) return;
+
+        try {
+            const playerDocRef = doc(db, gamePlayersCollectionPath, playerId);
+            await setDoc(playerDocRef, { name: formattedName }, { merge: true });
+        } catch (error) {
+            console.error("Erro ao atualizar nome do jogador: ", error);
+        } finally {
+            setPlayerToEdit(null);
+        }
+    };
+
     return (
         <div className="p-4 md:p-6">
             {isClearModalOpen && <ClearAllConfirmationModal onConfirm={clearAllPlayers} onCancel={() => setIsClearModalOpen(false)} />}
+            {playerToEdit && (
+                <EditPlayerModal 
+                    player={playerToEdit}
+                    onSave={handleUpdatePlayerName}
+                    onCancel={() => setPlayerToEdit(null)}
+                />
+            )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Jogadores da Partida</h2>
             
              <div className="bg-white p-4 rounded-lg shadow-sm border mb-6">
@@ -369,9 +392,14 @@ const PlayerList = ({ db, userId }) => {
                                 <p className="text-lg text-gray-800">{player.name}</p>
                                 {player.phone && <p className="text-sm text-gray-500">{player.phone}</p>}
                             </div>
-                            <button onClick={() => deletePlayer(player.id)} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors flex-shrink-0 ml-4">
-                                <TrashIcon />
-                            </button>
+                            <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                                <button onClick={() => setPlayerToEdit(player)} className="p-2 rounded-full bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+                                    <EditIcon />
+                                </button>
+                                <button onClick={() => deletePlayer(player.id)} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors">
+                                    <TrashIcon />
+                                </button>
+                            </div>
                         </li>
                     )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na lista da partida.</p>}
                 </ul>
@@ -566,8 +594,7 @@ Barclays
 23638502
 Paulo Simoes de Souza
 
-Clique no Link para confirmar o seu pagamento.
-
+Clique no Link para confirmar o seu pagamento
 rezaalenda.netlify.app`;
     };
 
@@ -1056,6 +1083,51 @@ const LoginModal = ({ onLogin, onClose }) => {
                         <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Entrar</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    );
+};
+
+// --- Componente Modal de Edição de Jogador ---
+const EditPlayerModal = ({ player, onSave, onCancel }) => {
+    const [newName, setNewName] = useState(player.name);
+    const modalRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (modalRef.current && !modalRef.current.contains(event.target)) {
+                onCancel();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [onCancel]);
+
+    const handleSave = () => {
+        if (newName.trim()) {
+            onSave(player.id, newName);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-40">
+            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                <h3 className="text-xl font-bold mb-4 text-center">Editar Jogador</h3>
+                <div className="space-y-4">
+                    <input 
+                        type="text" 
+                        value={newName} 
+                        onChange={(e) => setNewName(e.target.value)} 
+                        placeholder="Nome do jogador" 
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="mt-6 flex justify-end gap-4">
+                    <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="button" onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Salvar</button>
+                </div>
             </div>
         </div>
     );
