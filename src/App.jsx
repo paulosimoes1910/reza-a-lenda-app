@@ -566,7 +566,8 @@ Barclays
 23638502
 Paulo Simoes de Souza
 
-Clique no Link para confirmar o seu pagamento
+Clique no Link para confirmar o seu pagamento.
+
 rezaalenda.netlify.app`;
     };
 
