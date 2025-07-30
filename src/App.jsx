@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, setDoc, query, orderBy, writeBatch, where } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, setDoc, query, orderBy, writeBatch, where, getDoc } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import * as Tone from 'tone';
 
@@ -839,11 +839,13 @@ const TeamDivision = ({ db, userId }) => {
     const [hasBeenDivided, setHasBeenDivided] = useState(false);
     const [isRedivideModalOpen, setIsRedivideModalOpen] = useState(false);
     const gamePlayersCollectionPath = "game_players";
+    const dividedTeamsDocPath = "divided_teams/current_division";
 
     useEffect(() => {
         setLoading(true);
+        // Listener para a lista de jogadores
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
                 playersData.push({ id: doc.id, ...doc.data() });
@@ -854,17 +856,25 @@ const TeamDivision = ({ db, userId }) => {
             console.error("Erro ao buscar jogadores do jogo: ", error);
             setLoading(false);
         });
-        return () => unsubscribe();
+
+        // Listener para a divisão de times salva
+        const unsubscribeTeams = onSnapshot(doc(db, dividedTeamsDocPath), (docSnapshot) => {
+            if (docSnapshot.exists()) {
+                setTeams(docSnapshot.data());
+                setHasBeenDivided(true);
+            } else {
+                setTeams({ red: [], yellow: [], green: [] });
+                setHasBeenDivided(false);
+            }
+        });
+
+        return () => {
+            unsubscribePlayers();
+            unsubscribeTeams();
+        };
     }, [db]);
     
-    useEffect(() => {
-        if (gamePlayers.length === 0) {
-            setHasBeenDivided(false);
-            setTeams({ red: [], yellow: [], green: [] });
-        }
-    }, [gamePlayers]);
-
-    const performDivision = () => {
+    const performDivision = async () => {
         const shuffledPlayers = [...gamePlayers].sort(() => Math.random() - 0.5);
         const newTeams = { red: [], yellow: [], green: [] };
         shuffledPlayers.forEach((player, index) => {
@@ -876,9 +886,14 @@ const TeamDivision = ({ db, userId }) => {
                 newTeams.green.push(player);
             }
         });
-        setTeams(newTeams);
-        setHasBeenDivided(true);
-        setIsRedivideModalOpen(false);
+        
+        try {
+            await setDoc(doc(db, dividedTeamsDocPath), newTeams);
+            setHasBeenDivided(true);
+            setIsRedivideModalOpen(false);
+        } catch (error) {
+            console.error("Erro ao salvar divisão de times: ", error);
+        }
     };
 
     const handleDivideClick = () => {
@@ -913,7 +928,7 @@ const TeamDivision = ({ db, userId }) => {
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Divisão de Times</h2>
             <div className="mb-6">
                 <button onClick={handleDivideClick} disabled={gamePlayers.length === 0} className="w-full bg-indigo-600 text-white font-semibold px-6 py-4 rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                    <ShuffleIcon /> Dividir Times
+                    <ShuffleIcon /> {hasBeenDivided ? "Dividir Novamente" : "Dividir Times"}
                 </button>
             </div>
             {loading ? <p className="text-center text-gray-500">Carregando jogadores da partida...</p> :
