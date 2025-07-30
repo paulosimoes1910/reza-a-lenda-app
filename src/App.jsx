@@ -146,7 +146,8 @@ const PlayerRegistration = ({ db, userId }) => {
     const [individualPhone, setIndividualPhone] = useState('+44');
     const [loading, setLoading] = useState(true);
     const [playerToDelete, setPlayerToDelete] = useState(null);
-    const contactsCollectionPath = "contacts"; // Caminho simplificado
+    const [playerToEdit, setPlayerToEdit] = useState(null);
+    const contactsCollectionPath = "contacts";
 
     useEffect(() => {
         if (!userId) return;
@@ -190,16 +191,19 @@ const PlayerRegistration = ({ db, userId }) => {
             setPlayerToDelete(null);
         }
     };
-    
-    const handleSendMessage = (player) => {
-        const cleanPhone = player.phone.replace(/\D/g, '');
-        if (!cleanPhone) {
-            console.error("Número de telefone inválido:", player.phone);
-            return;
+
+    const handleUpdateContact = async (playerId, newName, newPhone) => {
+        const formattedName = capitalizeFullName(newName);
+        if (!formattedName) return;
+
+        try {
+            const contactDocRef = doc(db, contactsCollectionPath, playerId);
+            await setDoc(contactDocRef, { name: formattedName, phone: newPhone.trim() }, { merge: true });
+        } catch (error) {
+            console.error("Erro ao atualizar contato: ", error);
+        } finally {
+            setPlayerToEdit(null);
         }
-        const message = `Olá ${player.name}, passando para lembrar do nosso jogo!`;
-        const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-        window.open(whatsappUrl, '_blank');
     };
 
     return (
@@ -209,6 +213,13 @@ const PlayerRegistration = ({ db, userId }) => {
                     onConfirm={confirmDelete}
                     onCancel={() => setPlayerToDelete(null)}
                     message={`Você tem certeza que deseja apagar ${playerToDelete.name}?`}
+                />
+            )}
+            {playerToEdit && (
+                <EditContactModal 
+                    player={playerToEdit}
+                    onSave={handleUpdateContact}
+                    onCancel={() => setPlayerToEdit(null)}
                 />
             )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Cadastros</h2>
@@ -235,15 +246,15 @@ const PlayerRegistration = ({ db, userId }) => {
                                     <p className="text-sm text-gray-500">{player.phone}</p>
                                 </div>
                                 <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-                                     <button onClick={() => handleSendMessage(player)} className="p-2 rounded-full bg-green-500 hover:bg-green-600 transition-colors">
-                                        <WhatsAppIconForButton className="text-white h-5 w-5" />
+                                     <button onClick={() => setPlayerToEdit(player)} className="p-2 rounded-full bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+                                        <EditIcon />
                                      </button>
                                      <button onClick={() => setPlayerToDelete(player)} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors">
                                         <TrashIcon />
                                      </button>
                                 </div>
                             </li>
-                        )) : <p className="text-center text-gray-500 py-4">Nenhum jogador cadastrado com telefone.</p>}
+                        )) : <p className="text-center text-gray-500 py-4">Nenhum jogador cadastrado.</p>}
                     </ul>
                 </div>
             )}
@@ -255,7 +266,6 @@ const PlayerRegistration = ({ db, userId }) => {
 const PlayerList = ({ db, userId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [newPlayersText, setNewPlayersText] = useState('');
-    const [singlePlayerName, setSinglePlayerName] = useState('');
     const [loading, setLoading] = useState(true);
     const [isClearModalOpen, setIsClearModalOpen] = useState(false);
     const [playerToEdit, setPlayerToEdit] = useState(null);
@@ -298,12 +308,6 @@ const PlayerList = ({ db, userId }) => {
         });
     };
 
-    const addSinglePlayer = async () => {
-        if (singlePlayerName.trim() === '') return;
-        await addPlayerToGame(singlePlayerName);
-        setSinglePlayerName('');
-    };
-
     const addPlayersInBulk = async () => {
         if (newPlayersText.trim() === '' || !userId) return;
         
@@ -338,10 +342,23 @@ const PlayerList = ({ db, userId }) => {
         if (!formattedName) return;
 
         try {
+            // 1. Procura o novo nome na coleção de contatos
+            const contactsQuery = query(collection(db, contactsCollectionPath), where("name", "==", formattedName));
+            const contactsSnapshot = await getDocs(contactsQuery);
+            
+            let phone = ''; // Telefone padrão é vazio
+            if (!contactsSnapshot.empty) {
+                // 2. Se encontrar, pega o número de telefone
+                const contactData = contactsSnapshot.docs[0].data();
+                phone = contactData.phone || '';
+            }
+
+            // 3. Atualiza o jogador na lista da partida com o novo nome e telefone
             const playerDocRef = doc(db, gamePlayersCollectionPath, playerId);
-            await setDoc(playerDocRef, { name: formattedName }, { merge: true });
+            await setDoc(playerDocRef, { name: formattedName, phone: phone }, { merge: true });
+
         } catch (error) {
-            console.error("Erro ao atualizar nome do jogador: ", error);
+            console.error("Erro ao atualizar jogador: ", error);
         } finally {
             setPlayerToEdit(null);
         }
@@ -359,14 +376,6 @@ const PlayerList = ({ db, userId }) => {
             )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Jogadores da Partida</h2>
             
-             <div className="bg-white p-4 rounded-lg shadow-sm border mb-6">
-                <h3 className="font-semibold text-gray-700 mb-2">Adicionar Jogador Único</h3>
-                <div className="flex gap-2">
-                    <input type="text" value={singlePlayerName} onChange={(e) => setSinglePlayerName(e.target.value)} placeholder="Nome do jogador" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
-                    <button onClick={addSinglePlayer} className="bg-green-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-green-700">Adicionar</button>
-                </div>
-            </div>
-
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
                 <h3 className="font-semibold text-gray-700 mb-2">Adicionar em Massa</h3>
                 <textarea
@@ -594,7 +603,8 @@ Barclays
 23638502
 Paulo Simoes de Souza
 
-Clique no Link para confirmar o seu pagamento
+Confirme o seu pagamento no link abaixo:
+
 rezaalenda.netlify.app`;
     };
 
@@ -826,6 +836,8 @@ const TeamDivision = ({ db, userId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [teams, setTeams] = useState({ red: [], yellow: [], green: [] });
     const [loading, setLoading] = useState(true);
+    const [hasBeenDivided, setHasBeenDivided] = useState(false);
+    const [isRedivideModalOpen, setIsRedivideModalOpen] = useState(false);
     const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
@@ -844,8 +856,15 @@ const TeamDivision = ({ db, userId }) => {
         });
         return () => unsubscribe();
     }, [db]);
+    
+    useEffect(() => {
+        if (gamePlayers.length === 0) {
+            setHasBeenDivided(false);
+            setTeams({ red: [], yellow: [], green: [] });
+        }
+    }, [gamePlayers]);
 
-    const divideTeams = () => {
+    const performDivision = () => {
         const shuffledPlayers = [...gamePlayers].sort(() => Math.random() - 0.5);
         const newTeams = { red: [], yellow: [], green: [] };
         shuffledPlayers.forEach((player, index) => {
@@ -858,6 +877,16 @@ const TeamDivision = ({ db, userId }) => {
             }
         });
         setTeams(newTeams);
+        setHasBeenDivided(true);
+        setIsRedivideModalOpen(false);
+    };
+
+    const handleDivideClick = () => {
+        if (hasBeenDivided) {
+            setIsRedivideModalOpen(true);
+        } else {
+            performDivision();
+        }
     };
 
     const TeamColumn = ({ title, players, color }) => (
@@ -875,9 +904,15 @@ const TeamDivision = ({ db, userId }) => {
 
     return (
         <div className="p-4 md:p-6">
+            {isRedivideModalOpen && (
+                <RedivideConfirmationModal 
+                    onConfirm={performDivision}
+                    onCancel={() => setIsRedivideModalOpen(false)}
+                />
+            )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Divisão de Times</h2>
             <div className="mb-6">
-                <button onClick={divideTeams} disabled={gamePlayers.length === 0} className="w-full bg-indigo-600 text-white font-semibold px-6 py-4 rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                <button onClick={handleDivideClick} disabled={gamePlayers.length === 0} className="w-full bg-indigo-600 text-white font-semibold px-6 py-4 rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     <ShuffleIcon /> Dividir Times
                 </button>
             </div>
@@ -1127,6 +1162,87 @@ const EditPlayerModal = ({ player, onSave, onCancel }) => {
                 <div className="mt-6 flex justify-end gap-4">
                     <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancelar</button>
                     <button type="button" onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Salvar</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Componente Modal de Edição de Contato ---
+const EditContactModal = ({ player, onSave, onCancel }) => {
+    const [newName, setNewName] = useState(player.name);
+    const [newPhone, setNewPhone] = useState(player.phone);
+    const modalRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (modalRef.current && !modalRef.current.contains(event.target)) {
+                onCancel();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [onCancel]);
+
+    const handleSave = () => {
+        if (newName.trim()) {
+            onSave(player.id, newName, newPhone);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-40">
+            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                <h3 className="text-xl font-bold mb-4 text-center">Editar Contato</h3>
+                <div className="space-y-4">
+                    <input 
+                        type="text" 
+                        value={newName} 
+                        onChange={(e) => setNewName(e.target.value)} 
+                        placeholder="Nome do jogador" 
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                    <input 
+                        type="tel" 
+                        value={newPhone} 
+                        onChange={(e) => setNewPhone(e.target.value)} 
+                        placeholder="Telefone" 
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="mt-6 flex justify-end gap-4">
+                    <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="button" onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Salvar</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Componente Modal de Confirmação para Dividir Times ---
+const RedivideConfirmationModal = ({ onConfirm, onCancel }) => {
+    const modalRef = useRef(null);
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (modalRef.current && !modalRef.current.contains(event.target)) {
+                onCancel();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [onCancel]);
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-40">
+            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm text-center">
+                <p className="text-lg text-gray-800 mb-6">Uma divisão já foi feita.</p>
+                <div className="flex justify-center gap-4">
+                    <button onClick={onCancel} className="px-6 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 font-semibold">Voltar</button>
+                    <button onClick={onConfirm} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-semibold">Gerar Nova Divisão</button>
                 </div>
             </div>
         </div>
