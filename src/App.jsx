@@ -394,7 +394,6 @@ const PaymentControlList = ({ db, userId }) => {
     const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
-        if (!userId) return;
         setLoading(true);
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -404,10 +403,13 @@ const PaymentControlList = ({ db, userId }) => {
             });
             setPlayers(playersData);
             setLoading(false);
+        }, (error) => {
+            console.error("Erro ao buscar lista de pagamentos:", error);
+            setLoading(false);
         });
 
         return () => unsubscribe();
-    }, [db, userId]);
+    }, [db]);
 
     const handleStatusClick = (player) => {
         setPlayerToConfirm(player);
@@ -797,7 +799,6 @@ const TeamDivision = ({ db, userId }) => {
     const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
-        if (!userId) return;
         setLoading(true);
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -812,7 +813,7 @@ const TeamDivision = ({ db, userId }) => {
             setLoading(false);
         });
         return () => unsubscribe();
-    }, [db, userId]);
+    }, [db]);
 
     const divideTeams = () => {
         const shuffledPlayers = [...gamePlayers].sort(() => Math.random() - 0.5);
