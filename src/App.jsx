@@ -525,6 +525,7 @@ const SharePayment = ({ db, userId }) => {
     const paymentInfoDocId = 'paymentInfo';
 
     useEffect(() => {
+        if (!userId) return;
         const paymentInfoRef = doc(db, paymentInfoCollection, paymentInfoDocId);
         const unsubscribeInfo = onSnapshot(paymentInfoRef, (doc) => {
             if (doc.exists()) {
@@ -565,7 +566,8 @@ Barclays
 23638502
 Paulo Simoes de Souza
 
-Clique no Link para confirmar o seu pagamento`;
+Clique no Link para confirmar o seu pagamento
+rezaalenda.netlify.app`;
     };
 
     const handleWhatsAppShare = () => {
@@ -581,7 +583,7 @@ Clique no Link para confirmar o seu pagamento`;
             
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
                 <h3 className="text-lg font-semibold mb-3">Pré-visualização da Mensagem</h3>
-                <pre className="whitespace-pre-wrap font-sans text-gray-700 bg-gray-50 p-4 pl-0 rounded-md">
+                <pre className="whitespace-pre-wrap font-sans text-gray-700 bg-gray-50 p-4 rounded-md">
                     {generateMessage()}
                 </pre>
             </div>
@@ -905,10 +907,9 @@ export default function App() {
     
     const handleLogout = () => {
         signOut(auth).then(() => {
-            // Limpa o estado do usuário explicitamente
+            // Limpa o estado do usuário explicitamente para forçar a UI a atualizar
             setUser(null); 
-            // O listener onAuthStateChanged vai cuidar de logar anonimamente
-            // e atualizar o estado 'user', mas fazemos isso para uma resposta mais rápida.
+            // Redireciona para a página pública
             setActiveTab('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
@@ -932,7 +933,8 @@ export default function App() {
         if (activeTab === 'Cronômetro') return <Stopwatch />;
         
         // Se o admin estiver em uma aba pública, ela será renderizada.
-        // Se um usuário público tentar acessar uma aba de admin, nada será renderizado.
+        // Se um usuário público tentar acessar uma aba de admin (o que não deve acontecer
+        // pois o menu não mostra a opção), ele verá a tela de pagamentos.
         
         // Fallback final: se nada corresponder, mostre a tela de pagamentos
         return <PaymentControlList db={db} userId={userId} />;
