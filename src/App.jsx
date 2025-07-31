@@ -603,18 +603,15 @@ Detalhes de Pagamento
 
 £ ${paymentInfo.individualValue}
 
-Barclays
-20-26-82
-23638502
+Sort Cod: 20-26-82
+Account : 23638502
 Paulo Simoes de Souza
 
-Clique no Link para confirmar o seu pagamento
+Clica no Link para confirmar o seu pagamento.
 
 https://rezaalenda.netlify.app
 
-
-
-`;
+Obrigado!!!`;
     };
 
     const handleWhatsAppShare = () => {
