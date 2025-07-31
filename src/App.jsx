@@ -75,7 +75,7 @@ const Home = ({ db, userId }) => {
             console.error("Número de telefone inválido:", player.phone);
             return;
         }
-        const message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do fut.\n\nE não esqueça de confimar seu pagamento no Link que está na mensagem no grupo.\n\nObrigado`;
+        const message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
         const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
         window.open(whatsappUrl, '_blank');
     };
@@ -334,6 +334,11 @@ const PlayerList = ({ db, userId }) => {
         const deleteBatch = writeBatch(db);
         existingPlayersSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
         await deleteBatch.commit();
+        
+        // Limpa também a divisão de times
+        const dividedTeamsDocRef = doc(db, "divided_teams/current_division");
+        await deleteDoc(dividedTeamsDocRef).catch(err => console.log("Nenhuma divisão de times para limpar."));
+
         setIsClearModalOpen(false);
     };
 
@@ -377,11 +382,11 @@ const PlayerList = ({ db, userId }) => {
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Jogadores da Partida</h2>
             
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
-                <h3 className="font-semibold text-gray-700 mb-2">Adicionar em Massa</h3>
+                <h3 className="font-semibold text-gray-700 mb-2">Adicionar Jogadores</h3>
                 <textarea
                     value={newPlayersText}
                     onChange={(e) => setNewPlayersText(e.target.value)}
-                    placeholder="Cole a lista de nomes aqui. Cada nome em uma nova linha."
+                    placeholder="Cole a lista de nomes aqui."
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none min-h-[100px]"
                 />
                 <button
@@ -603,9 +608,13 @@ Barclays
 23638502
 Paulo Simoes de Souza
 
-Confirme o seu pagamento no link abaixo:
+Clique no Link para confirmar o seu pagamento
 
-rezaalenda.netlify.app`;
+https://rezaalenda.netlify.app
+
+
+
+`;
     };
 
     const handleWhatsAppShare = () => {
