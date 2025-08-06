@@ -69,6 +69,7 @@ const Home = ({ db, userId }) => {
         return () => unsubscribe();
     }, [db, userId]);
 
+    // --- FUNÇÃO ATUALIZADA ---
     const handleSendMessage = (player) => {
         const cleanPhone = player.phone.replace(/\D/g, '');
         if (!cleanPhone) {
@@ -76,8 +77,16 @@ const Home = ({ db, userId }) => {
             return;
         }
         const message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
-        const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-        window.open(whatsappUrl, '_blank');
+        
+        // Verifica se a "ponte" para o Android existe
+        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
+            // Se existir, chama a função nativa do Android
+            window.AndroidBridge.openWhatsApp(cleanPhone, message);
+        } else {
+            // Se não, abre o link normal (para funcionar no navegador do computador)
+            const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+            window.open(whatsappUrl, '_blank');
+        }
     };
 
     const paidPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago');
@@ -614,10 +623,19 @@ https://rezaalenda.netlify.app
 Obrigado!!!`;
     };
 
+    // --- FUNÇÃO ATUALIZADA ---
     const handleWhatsAppShare = () => {
         const message = generateMessage();
-        const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-        window.open(whatsappUrl, '_blank');
+        
+        // Verifica se a "ponte" para o Android existe
+        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
+            // Para o compartilhamento geral, o número de telefone é vazio
+            window.AndroidBridge.openWhatsApp("", message);
+        } else {
+            // Se não, abre o link normal (para funcionar no navegador do computador)
+            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+            window.open(whatsappUrl, '_blank');
+        }
     };
 
     return (
