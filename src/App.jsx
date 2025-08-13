@@ -22,13 +22,13 @@ const ShuffleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" hei
 
 // --- Configuração do Firebase ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCCuZ2hPhw1TKwYs5gszoHelfT5c11BH9o",
-  authDomain: "aplicativo-de-financas.firebaseapp.com",
-  projectId: "aplicativo-de-financas",
-  storageBucket: "aplicativo-de-financas.firebasestorage.app",
-  messagingSenderId: "520430593915",
-  appId: "1:520430593915:web:b8b1b8646a2f6ec7463fde",
-  measurementId: "G-5LPVR2ZLJY"
+    apiKey: "AIzaSyCCuZ2hPhw1TKwYs5gszoHelfT5c11BH9o",
+    authDomain: "aplicativo-de-financas.firebaseapp.com",
+    projectId: "aplicativo-de-financas",
+    storageBucket: "aplicativo-de-financas.appspot.com",
+    messagingSenderId: "520430593915",
+    appId: "1:520430593915:web:b8b1b8646a2f6ec7463fde",
+    measurementId: "G-5LPVR2ZLJY"
 };
 
 // Inicializa o Firebase
@@ -39,7 +39,7 @@ const auth = getAuth(app);
 // --- Função Utilitária ---
 const capitalizeFullName = (name) => {
     if (!name) return '';
-    return name.trim().split(' ').filter(word => word).map(word => 
+    return name.trim().split(' ').filter(word => word).map(word =>
         word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
     ).join(' ');
 };
@@ -49,13 +49,15 @@ const Home = ({ db, userId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [view, setView] = useState('summary'); // 'summary', 'paid', 'pending'
-    const gamePlayersCollectionPath = "game_players"; // Caminho simplificado
+    const [paymentInfo, setPaymentInfo] = useState(null);
+    const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
         if (!userId) return;
         setLoading(true);
+
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
                 playersData.push({ id: doc.id, ...doc.data() });
@@ -66,24 +68,40 @@ const Home = ({ db, userId }) => {
             console.error("Erro ao buscar jogadores do jogo: ", error);
             setLoading(false);
         });
-        return () => unsubscribe();
+
+        const paymentInfoRef = doc(db, "app_details", "paymentInfo");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
+            if (doc.exists()) {
+                setPaymentInfo(doc.data());
+            } else {
+                console.log("Documento de informações de pagamento não encontrado.");
+            }
+        });
+
+        return () => {
+            unsubscribePlayers();
+            unsubscribePaymentInfo();
+        };
     }, [db, userId]);
 
-    // --- FUNÇÃO ATUALIZADA ---
     const handleSendMessage = (player) => {
         const cleanPhone = player.phone.replace(/\D/g, '');
         if (!cleanPhone) {
             console.error("Número de telefone inválido:", player.phone);
             return;
         }
-        const message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
-        
-        // Verifica se a "ponte" para o Android existe
+
+        let message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!`;
+
+        if (paymentInfo && paymentInfo.individualValue) {
+            message += `\n\nO valor é £${paymentInfo.individualValue}`;
+        }
+
+        message += `\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
+
         if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
-            // Se existir, chama a função nativa do Android
             window.AndroidBridge.openWhatsApp(cleanPhone, message);
         } else {
-            // Se não, abre o link normal (para funcionar no navegador do computador)
             const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
             window.open(whatsappUrl, '_blank');
         }
@@ -119,7 +137,7 @@ const Home = ({ db, userId }) => {
     return (
         <div className="p-4 md:p-6">
             <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Resumo do Jogo</h1>
-            {loading ? <p className="text-center text-gray-500">Carregando resumo...</p> : 
+            {loading ? <p className="text-center text-gray-500">Carregando resumo...</p> :
             (view === 'summary' ? (
                 <>
                     <div className="grid grid-cols-3 gap-4 text-center mb-8">
@@ -356,18 +374,15 @@ const PlayerList = ({ db, userId }) => {
         if (!formattedName) return;
 
         try {
-            // 1. Procura o novo nome na coleção de contatos
             const contactsQuery = query(collection(db, contactsCollectionPath), where("name", "==", formattedName));
             const contactsSnapshot = await getDocs(contactsQuery);
             
-            let phone = ''; // Telefone padrão é vazio
+            let phone = '';
             if (!contactsSnapshot.empty) {
-                // 2. Se encontrar, pega o número de telefone
                 const contactData = contactsSnapshot.docs[0].data();
                 phone = contactData.phone || '';
             }
 
-            // 3. Atualiza o jogador na lista da partida com o novo nome e telefone
             const playerDocRef = doc(db, gamePlayersCollectionPath, playerId);
             await setDoc(playerDocRef, { name: formattedName, phone: phone }, { merge: true });
 
@@ -623,16 +638,12 @@ https://rezaalenda.netlify.app
 Obrigado!!!`;
     };
 
-    // --- FUNÇÃO ATUALIZADA ---
     const handleWhatsAppShare = () => {
         const message = generateMessage();
         
-        // Verifica se a "ponte" para o Android existe
         if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
-            // Para o compartilhamento geral, o número de telefone é vazio
             window.AndroidBridge.openWhatsApp("", message);
         } else {
-            // Se não, abre o link normal (para funcionar no navegador do computador)
             const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
             window.open(whatsappUrl, '_blank');
         }
@@ -867,7 +878,6 @@ const TeamDivision = ({ db, userId }) => {
 
     useEffect(() => {
         setLoading(true);
-        // Listener para a lista de jogadores
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
         const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
@@ -881,7 +891,6 @@ const TeamDivision = ({ db, userId }) => {
             setLoading(false);
         });
 
-        // Listener para a divisão de times salva
         const unsubscribeTeams = onSnapshot(doc(db, dividedTeamsDocPath), (docSnapshot) => {
             if (docSnapshot.exists()) {
                 setTeams(docSnapshot.data());
@@ -971,22 +980,19 @@ const TeamDivision = ({ db, userId }) => {
 // --- Componente Principal App ---
 export default function App() {
     const [activeTab, setActiveTab] = useState('Pagamentos');
-    const [user, setUser] = useState(null); // Armazena o objeto de usuário completo
+    const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
-    // Deriva o estado de login e o ID do usuário a partir do objeto 'user'
     const isLoggedIn = user && !user.isAnonymous;
     const userId = user ? user.uid : null;
 
     useEffect(() => {
         const authListener = onAuthStateChanged(auth, (user) => {
             if (user) {
-                // Usuário está logado (seja anonimamente ou com e-mail)
                 setUser(user);
             } else {
-                // Usuário deslogou, então logamos anonimamente para o acesso público
                 signInAnonymously(auth).catch(error => console.error("Erro no login anônimo:", error));
             }
             setIsAuthReady(true);
@@ -1009,9 +1015,7 @@ export default function App() {
     
     const handleLogout = () => {
         signOut(auth).then(() => {
-            // Limpa o estado do usuário explicitamente para forçar a UI a atualizar
             setUser(null); 
-            // Redireciona para a página pública
             setActiveTab('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
@@ -1021,7 +1025,6 @@ export default function App() {
             return <div className="flex justify-center items-center h-full"><p>Autenticando...</p></div>;
         }
 
-        // Rotas de Administrador
         if (isLoggedIn) {
             if (activeTab === 'Home') return <Home db={db} userId={userId} />;
             if (activeTab === 'Cadastros') return <PlayerRegistration db={db} userId={userId} />;
@@ -1029,16 +1032,10 @@ export default function App() {
             if (activeTab === 'Compartilhar Pagamento') return <SharePayment db={db} userId={userId} />;
         }
 
-        // Rotas Públicas (e padrão para não logado)
         if (activeTab === 'Pagamentos') return <PaymentControlList db={db} userId={userId} />;
         if (activeTab === 'Divisão de Times') return <TeamDivision db={db} userId={userId} />;
         if (activeTab === 'Cronômetro') return <Stopwatch />;
         
-        // Se o admin estiver em uma aba pública, ela será renderizada.
-        // Se um usuário público tentar acessar uma aba de admin (o que não deve acontecer
-        // pois o menu não mostra a opção), ele verá a tela de pagamentos.
-        
-        // Fallback final: se nada corresponder, mostre a tela de pagamentos
         return <PaymentControlList db={db} userId={userId} />;
     };
 
@@ -1118,7 +1115,7 @@ const LoginModal = ({ onLogin, onClose }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError(''); // Limpa o erro anterior
+        setError('');
         const result = await onLogin(email, password);
         if (!result.success) {
             setError(result.message || 'Ocorreu um erro.');
