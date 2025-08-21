@@ -22,6 +22,7 @@ const ShuffleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" hei
 const CreditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>;
 const FinanceIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7h-5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h5"></path><path d="M8 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3"></path><path d="M8 17a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2z"></path></svg>;
 
+
 // --- Configuração do Firebase ---
 const firebaseConfig = {
     apiKey: "AIzaSyCCuZ2hPhw1TKwYs5gszoHelfT5c11BH9o",
@@ -99,6 +100,9 @@ const Home = ({ db, userId }) => {
             message += `\n\nO valor é £${paymentInfo.individualValue}`;
         }
 
+        // Adicionando os dados da conta
+        message += `\n\nDetalhes de Pagamento\nSort Cod: 20-26-82\nAccount : 23638502\nPaulo Simoes de Souza`;
+
         message += `\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
 
         if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
@@ -173,7 +177,6 @@ const Home = ({ db, userId }) => {
         </div>
     );
 };
-
 
 // --- Componente de Cadastro ---
 const PlayerRegistration = ({ db, userId }) => {
@@ -308,6 +311,7 @@ const GameControlPanel = ({ db, userId }) => {
     const gamePlayersCollectionPath = "game_players";
     const contactsCollectionPath = "contacts";
     const transactionsCollectionPath = "transactions";
+    const creditsCollectionPath = "credits";
 
     useEffect(() => {
         if (!userId) return;
@@ -366,13 +370,49 @@ const GameControlPanel = ({ db, userId }) => {
         setNewPlayersText('');
     };
     
-    const clearAllPlayers = async () => {
-        const existingPlayersSnapshot = await getDocs(collection(db, gamePlayersCollectionPath));
-        const deleteBatch = writeBatch(db);
-        existingPlayersSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
-        await deleteBatch.commit();
+    const finalizeAndClearGame = async () => {
+        const batch = writeBatch(db);
+        const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+
+        // 1. Atribuir créditos
+        if (individualValue > 0) {
+            const playersToCredit = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
+
+            for (const player of playersToCredit) {
+                const creditsQuery = query(collection(db, creditsCollectionPath), where("name", "==", player.name));
+                const querySnapshot = await getDocs(creditsQuery);
+
+                if (!querySnapshot.empty) {
+                    const creditDoc = querySnapshot.docs[0];
+                    const existingAmount = creditDoc.data().amount || 0;
+                    const newAmount = existingAmount + individualValue;
+                    batch.update(creditDoc.ref, { amount: newAmount });
+                } else {
+                    const creditRef = doc(collection(db, creditsCollectionPath));
+                    batch.set(creditRef, { 
+                        name: player.name, 
+                        amount: individualValue,
+                        createdAt: serverTimestamp() 
+                    });
+                }
+            }
+        }
+
+        // 2. Limpar lista de jogadores do jogo
+        gamePlayers.forEach(player => {
+            const playerRef = doc(db, gamePlayersCollectionPath, player.id);
+            batch.delete(playerRef);
+        });
+        
+        // 3. Limpar divisão de times
         const dividedTeamsDocRef = doc(db, "divided_teams/current_division");
-        await deleteDoc(dividedTeamsDocRef).catch(err => console.log("Nenhuma divisão de times para limpar."));
+        batch.delete(dividedTeamsDocRef);
+
+        try {
+            await batch.commit();
+        } catch (error) {
+            console.error("Erro ao finalizar jogo: ", error);
+        }
         setIsClearModalOpen(false);
     };
 
@@ -381,7 +421,6 @@ const GameControlPanel = ({ db, userId }) => {
             const playerDocRef = doc(db, gamePlayersCollectionPath, player.id);
             await setDoc(playerDocRef, { [field]: value }, { merge: true });
 
-            // AUTOMAÇÃO: Se o pagamento for alterado para "Pago", cria uma transação de entrada
             if (field === 'paymentStatus' && value === 'Pago') {
                 const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
                 if (individualValue > 0) {
@@ -400,7 +439,7 @@ const GameControlPanel = ({ db, userId }) => {
 
     return (
         <div className="p-4 md:p-6">
-            {isClearModalOpen && <ClearAllConfirmationModal onConfirm={clearAllPlayers} onCancel={() => setIsClearModalOpen(false)} />}
+            {isClearModalOpen && <ConfirmationModal onConfirm={finalizeAndClearGame} onCancel={() => setIsClearModalOpen(false)} message="Tem a certeza que quer finalizar o jogo? Isto vai atribuir créditos e limpar a lista para a próxima partida." />}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Painel de Controlo do Jogo</h2>
             
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
@@ -441,7 +480,7 @@ const GameControlPanel = ({ db, userId }) => {
                 </ul>
                 {gamePlayers.length > 0 && (
                     <button onClick={() => setIsClearModalOpen(true)} className="w-full mt-6 bg-red-500 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-600 transition-colors">
-                        Apagar Lista do Jogo
+                        Finalizar e Limpar Jogo
                     </button>
                 )}
             </>)}
@@ -449,7 +488,7 @@ const GameControlPanel = ({ db, userId }) => {
     );
 };
 
-// --- NOVO COMPONENTE: Finanças ---
+// --- Componente Finanças ---
 const Finances = ({ db, userId }) => {
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -490,18 +529,43 @@ const Finances = ({ db, userId }) => {
     };
 
     const deleteTransaction = async (id) => {
-        if (window.confirm("Tem a certeza que quer apagar esta transação?")) {
-            try {
-                await deleteDoc(doc(db, transactionsCollectionPath, id));
-            } catch (error) {
-                console.error("Erro ao apagar transação: ", error);
-            }
+        try {
+            await deleteDoc(doc(db, transactionsCollectionPath, id));
+        } catch (error) {
+            console.error("Erro ao apagar transação: ", error);
         }
     };
+
+    const totals = transactions.reduce((acc, t) => {
+        const amount = t.amount || 0; // Garante que o valor é um número
+        if (t.type === 'income') {
+            acc.income += amount;
+        } else if (t.type === 'expense') {
+            acc.expense += amount;
+        }
+        return acc;
+    }, { income: 0, expense: 0 });
+
+    const balance = totals.income - totals.expense;
 
     return (
         <div className="p-4 md:p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão Financeira</h2>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center mb-8">
+                <div className="bg-green-100 p-4 rounded-lg shadow-sm">
+                    <p className="text-sm text-green-700">Total Arrecadado</p>
+                    <p className="text-2xl font-bold text-green-800">£{totals.income.toFixed(2)}</p>
+                </div>
+                <div className="bg-red-100 p-4 rounded-lg shadow-sm">
+                    <p className="text-sm text-red-700">Total Gasto</p>
+                    <p className="text-2xl font-bold text-red-800">£{totals.expense.toFixed(2)}</p>
+                </div>
+                <div className="bg-blue-100 p-4 rounded-lg shadow-sm">
+                    <p className="text-sm text-blue-700">Saldo Atual</p>
+                    <p className="text-2xl font-bold text-blue-800">£{balance.toFixed(2)}</p>
+                </div>
+            </div>
 
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
                 <h3 className="font-semibold text-gray-700 mb-2">Adicionar Nova Despesa</h3>
@@ -524,7 +588,7 @@ const Finances = ({ db, userId }) => {
                                 <div>
                                     <p className="text-gray-800">{t.description}</p>
                                     <p className={`font-bold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                        {t.type === 'income' ? '+' : '-'} £{t.amount.toFixed(2)}
+                                        {t.type === 'income' ? '+' : '-'} £{(t.amount || 0).toFixed(2)}
                                     </p>
                                 </div>
                                 <button onClick={() => deleteTransaction(t.id)} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
@@ -532,6 +596,114 @@ const Finances = ({ db, userId }) => {
                                 </button>
                             </li>
                         )) : <p className="text-center text-gray-500 py-4">Nenhuma transação registada.</p>}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// --- Componente Gestão de Créditos ---
+const CreditManagement = ({ db, userId }) => {
+    const [credits, setCredits] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [paymentInfo, setPaymentInfo] = useState(null);
+    const creditsCollectionPath = "credits";
+    const gamePlayersCollectionPath = "game_players";
+
+    useEffect(() => {
+        if (!userId) return;
+        setLoading(true);
+        const q = query(collection(db, creditsCollectionPath), orderBy("createdAt", "desc"));
+        const unsubscribeCredits = onSnapshot(q, (querySnapshot) => {
+            const creditsData = [];
+            querySnapshot.forEach((doc) => {
+                creditsData.push({ id: doc.id, ...doc.data() });
+            });
+            setCredits(creditsData);
+            setLoading(false);
+        });
+
+        const paymentInfoRef = doc(db, "app_details", "paymentInfo");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
+            if (doc.exists()) {
+                setPaymentInfo(doc.data());
+            }
+        });
+
+        return () => {
+            unsubscribeCredits();
+            unsubscribePaymentInfo();
+        };
+    }, [db, userId]);
+
+    const useCredit = async (credit) => {
+        const creditAmount = credit.amount || 0;
+        const currentGameCost = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+        
+        if (currentGameCost <= 0) {
+            alert("O valor individual da partida atual não foi definido. Edite as informações de pagamento primeiro.");
+            return;
+        }
+
+        const q = query(collection(db, gamePlayersCollectionPath), where("name", "==", credit.name));
+        const gamePlayersSnapshot = await getDocs(q);
+
+        if (gamePlayersSnapshot.empty) {
+            alert(`Jogador "${credit.name}" não encontrado na lista da partida atual. Adicione-o primeiro.`);
+            return;
+        }
+
+        const newBalance = creditAmount - currentGameCost;
+
+        const confirmationMessage = `Deseja usar £${currentGameCost.toFixed(2)} do crédito de ${credit.name}?\n\n` +
+                                  `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
+
+        const confirmation = window.confirm(confirmationMessage);
+
+        if (confirmation) {
+            const batch = writeBatch(db);
+
+            // Mark player as paid in the current game
+            const playerDoc = gamePlayersSnapshot.docs[0];
+            const playerRef = doc(db, gamePlayersCollectionPath, playerDoc.id);
+            batch.update(playerRef, { paymentStatus: 'Pago' });
+
+            // Update the credit document with the new balance
+            const creditRef = doc(db, creditsCollectionPath, credit.id);
+            batch.update(creditRef, { amount: newBalance });
+
+            try {
+                await batch.commit();
+                alert(`Crédito de ${credit.name} utilizado com sucesso!`);
+            } catch (error) {
+                console.error("Erro ao usar crédito: ", error);
+                alert("Ocorreu um erro ao tentar usar o crédito.");
+            }
+        }
+    };
+
+    return (
+        <div className="p-4 md:p-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão de Créditos</h2>
+
+            {loading ? <p className="text-gray-500 text-center">A carregar créditos...</p> :
+            (
+                <div>
+                    <ul className="space-y-3">
+                        {credits.length > 0 ? credits.map(credit => (
+                            <li key={credit.id} className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm border">
+                                <p className={`text-lg text-gray-800`}>
+                                    {credit.name} - 
+                                    <span className={`font-bold ${(credit.amount || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                        {' '}£{(credit.amount || 0).toFixed(2)}
+                                    </span>
+                                </p>
+                                <button onClick={() => useCredit(credit)} className="bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg shadow-md hover:bg-blue-700">
+                                    Usar Crédito
+                                </button>
+                            </li>
+                        )) : <p className="text-center text-gray-500 py-4">Nenhum jogador com crédito.</p>}
                     </ul>
                 </div>
             )}
@@ -1067,7 +1239,7 @@ const TeamDivision = ({ db, userId }) => {
 
 // --- Componente Principal App ---
 export default function App() {
-    const [activeTab, setActiveTab] = useState('Pagamentos');
+    const [activeTab, setActiveTab] = useState(''); // Estado inicial vazio, será definido pelo URL
     const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -1076,6 +1248,7 @@ export default function App() {
     const isLoggedIn = user && !user.isAnonymous;
     const userId = user ? user.uid : null;
 
+    // Efeito para autenticação
     useEffect(() => {
         const authListener = onAuthStateChanged(auth, (user) => {
             if (user) {
@@ -1089,11 +1262,41 @@ export default function App() {
         return () => authListener();
     }, []);
 
+    // NOVO: Efeito para controlar a navegação via URL hash
+    useEffect(() => {
+        const handleHashChange = () => {
+            const hash = window.location.hash.substring(1); // Remove o '#'
+            const decodedHash = decodeURIComponent(hash);
+
+            // Define a aba ativa com base no hash, ou um valor padrão se não houver hash
+            const defaultTab = isLoggedIn ? 'Home' : 'Pagamentos';
+            setActiveTab(decodedHash || defaultTab);
+        };
+
+        // Adiciona o listener para o evento hashchange
+        window.addEventListener('hashchange', handleHashChange, false);
+
+        // Define a aba inicial ao carregar a página
+        handleHashChange();
+
+        // Limpa o listener quando o componente é desmontado
+        return () => {
+            window.removeEventListener('hashchange', handleHashChange, false);
+        };
+    }, [isLoggedIn]); // Re-executa se o status de login mudar
+
+    // NOVO: Função para mudar de aba e atualizar o URL
+    const navigateTo = (tabName) => {
+        window.location.hash = encodeURIComponent(tabName);
+        setIsMenuOpen(false); // Fecha o menu ao navegar
+    };
+
+
     const handleLogin = async (email, password) => {
         try {
             await signInWithEmailAndPassword(auth, email, password);
             setIsLoginModalOpen(false);
-            setActiveTab('Home');
+            navigateTo('Home'); // Navega para Home após o login
             return { success: true };
         } catch (error) {
             console.error("Erro de login:", error);
@@ -1104,13 +1307,13 @@ export default function App() {
     const handleLogout = () => {
         signOut(auth).then(() => {
             setUser(null); 
-            setActiveTab('Pagamentos');
+            navigateTo('Pagamentos'); // Navega para Pagamentos após o logout
         }).catch(error => console.error("Erro no logout:", error));
     };
 
     const renderContent = () => {
-        if (!isAuthReady) {
-            return <div className="flex justify-center items-center h-full"><p>Autenticando...</p></div>;
+        if (!isAuthReady || !activeTab) {
+            return <div className="flex justify-center items-center h-full"><p>Carregando...</p></div>;
         }
 
         if (isLoggedIn) {
@@ -1118,22 +1321,22 @@ export default function App() {
             if (activeTab === 'Cadastros') return <PlayerRegistration db={db} userId={userId} />;
             if (activeTab === 'Painel de Controlo') return <GameControlPanel db={db} userId={userId} />;
             if (activeTab === 'Finanças') return <Finances db={db} userId={userId} />;
+            if (activeTab === 'Créditos') return <CreditManagement db={db} userId={userId} />;
             if (activeTab === 'Compartilhar Pagamento') return <SharePayment db={db} userId={userId} />;
         }
 
+        // Abas públicas ou quando logado
         if (activeTab === 'Pagamentos') return <PaymentControlList db={db} userId={userId} />;
         if (activeTab === 'Divisão de Times') return <TeamDivision db={db} userId={userId} />;
         if (activeTab === 'Cronômetro') return <Stopwatch />;
         
+        // Se nenhuma aba corresponder (ex: URL inválida), mostra a página padrão
         return <PaymentControlList db={db} userId={userId} />;
     };
 
     const MenuItem = ({ tabName, icon }) => (
         <button
-            onClick={() => {
-                setActiveTab(tabName);
-                setIsMenuOpen(false);
-            }}
+            onClick={() => navigateTo(tabName)}
             className={`flex items-center w-full text-left p-4 text-lg transition-colors duration-200 ${activeTab === tabName ? 'bg-blue-100 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-100'}`}
         >
             <span className="mr-4">{icon}</span>
@@ -1163,6 +1366,7 @@ export default function App() {
                     {isLoggedIn && <MenuItem tabName="Cadastros" icon={<UserPlusIcon />} />}
                     {isLoggedIn && <MenuItem tabName="Painel de Controlo" icon={<UsersIcon />} />}
                     {isLoggedIn && <MenuItem tabName="Finanças" icon={<FinanceIcon />} />}
+                    {isLoggedIn && <MenuItem tabName="Créditos" icon={<CreditIcon />} />}
                     <MenuItem tabName="Pagamentos" icon={<DollarSignIcon />} />
                     <MenuItem tabName="Divisão de Times" icon={<ShuffleIcon />} />
                     {isLoggedIn && <MenuItem tabName="Compartilhar Pagamento" icon={<WhatsAppIcon />} />}
