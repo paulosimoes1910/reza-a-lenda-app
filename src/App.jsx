@@ -608,6 +608,7 @@ const CreditManagement = ({ db, userId }) => {
     const [credits, setCredits] = useState([]);
     const [loading, setLoading] = useState(true);
     const [paymentInfo, setPaymentInfo] = useState(null);
+    const [modalState, setModalState] = useState({ isOpen: false, message: '', onConfirm: () => {}, onCancel: () => {}, showCancel: false });
     const creditsCollectionPath = "credits";
     const gamePlayersCollectionPath = "game_players";
 
@@ -638,11 +639,15 @@ const CreditManagement = ({ db, userId }) => {
     }, [db, userId]);
 
     const useCredit = async (credit) => {
-        const creditAmount = credit.amount || 0;
         const currentGameCost = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
         
         if (currentGameCost <= 0) {
-            alert("O valor individual da partida atual não foi definido. Edite as informações de pagamento primeiro.");
+            setModalState({
+                isOpen: true,
+                message: "O valor individual da partida atual não foi definido. Edite as informações de pagamento primeiro.",
+                onConfirm: () => setModalState({ isOpen: false }),
+                showCancel: false,
+            });
             return;
         }
 
@@ -650,41 +655,73 @@ const CreditManagement = ({ db, userId }) => {
         const gamePlayersSnapshot = await getDocs(q);
 
         if (gamePlayersSnapshot.empty) {
-            alert(`Jogador "${credit.name}" não encontrado na lista da partida atual. Adicione-o primeiro.`);
+            setModalState({
+                isOpen: true,
+                message: `Jogador "${credit.name}" não encontrado na lista da partida atual. Adicione-o primeiro.`,
+                onConfirm: () => setModalState({ isOpen: false }),
+                showCancel: false,
+            });
             return;
         }
 
-        const newBalance = creditAmount - currentGameCost;
-
-        const confirmationMessage = `Deseja usar £${currentGameCost.toFixed(2)} do crédito de ${credit.name}?\n\n` +
-                                  `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
-
-        const confirmation = window.confirm(confirmationMessage);
-
-        if (confirmation) {
+        const performCreditUpdate = async () => {
+            const creditAmount = credit.amount || 0;
+            const newBalance = creditAmount - currentGameCost;
             const batch = writeBatch(db);
 
-            // Mark player as paid in the current game
             const playerDoc = gamePlayersSnapshot.docs[0];
             const playerRef = doc(db, gamePlayersCollectionPath, playerDoc.id);
             batch.update(playerRef, { paymentStatus: 'Pago' });
 
-            // Update the credit document with the new balance
             const creditRef = doc(db, creditsCollectionPath, credit.id);
             batch.update(creditRef, { amount: newBalance });
 
             try {
                 await batch.commit();
-                alert(`Crédito de ${credit.name} utilizado com sucesso!`);
+                setModalState({
+                    isOpen: true,
+                    message: `Crédito de ${credit.name} utilizado com sucesso!`,
+                    onConfirm: () => setModalState({ isOpen: false }),
+                    showCancel: false,
+                });
             } catch (error) {
                 console.error("Erro ao usar crédito: ", error);
-                alert("Ocorreu um erro ao tentar usar o crédito.");
+                setModalState({
+                    isOpen: true,
+                    message: "Ocorreu um erro ao tentar usar o crédito.",
+                    onConfirm: () => setModalState({ isOpen: false }),
+                    showCancel: false,
+                });
             }
-        }
+        };
+        
+        const creditAmount = credit.amount || 0;
+        const newBalance = creditAmount - currentGameCost;
+        const confirmationMessage = `Deseja usar £${currentGameCost.toFixed(2)} do crédito de ${credit.name}?\n\n` +
+                                  `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
+
+        setModalState({
+            isOpen: true,
+            message: confirmationMessage,
+            onConfirm: () => {
+                setModalState({ isOpen: false });
+                performCreditUpdate();
+            },
+            onCancel: () => setModalState({ isOpen: false }),
+            showCancel: true,
+        });
     };
 
     return (
         <div className="p-4 md:p-6">
+            {modalState.isOpen && (
+                <AlertDialog 
+                    message={modalState.message}
+                    onConfirm={modalState.onConfirm}
+                    onCancel={modalState.onCancel}
+                    showCancel={modalState.showCancel}
+                />
+            )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão de Créditos</h2>
 
             {loading ? <p className="text-gray-500 text-center">A carregar créditos...</p> :
@@ -827,6 +864,37 @@ const ConfirmationModal = ({ onConfirm, onCancel, message }) => {
         </div>
     );
 };
+
+// --- NOVO Componente Modal de Alerta/Confirmação ---
+const AlertDialog = ({ message, onConfirm, onCancel, showCancel = true }) => {
+    const modalRef = useRef(null);
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (modalRef.current && !modalRef.current.contains(event.target)) {
+                if(onCancel) onCancel();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [onCancel]);
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-50">
+            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm text-center">
+                <p className="text-lg text-gray-800 mb-6 whitespace-pre-wrap">{message}</p>
+                <div className="flex justify-center gap-4">
+                    {showCancel && (
+                        <button onClick={onCancel} className="px-8 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 font-semibold">Cancelar</button>
+                    )}
+                    <button onClick={onConfirm} className="px-8 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-semibold">OK</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 const ClearAllConfirmationModal = ({ onConfirm, onCancel }) => (
     <ConfirmationModal 
