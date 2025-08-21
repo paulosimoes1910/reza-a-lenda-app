@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, setDoc, query, orderBy, writeBatch, where, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, setDoc, query, orderBy, writeBatch, where, getDoc, serverTimestamp } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import * as Tone from 'tone';
 
@@ -19,16 +19,18 @@ const WhatsAppIconForButton = ({ className }) => <svg xmlns="http://www.w3.org/2
 const EyeIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EyeOffIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>;
 const ShuffleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="16 16 21 16 21 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>;
+const CreditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>;
+const FinanceIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7h-5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h5"></path><path d="M8 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3"></path><path d="M8 17a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2z"></path></svg>;
 
 // --- Configuração do Firebase ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCCuZ2hPhw1TKwYs5gszoHelfT5c11BH9o",
-  authDomain: "aplicativo-de-financas.firebaseapp.com",
-  projectId: "aplicativo-de-financas",
-  storageBucket: "aplicativo-de-financas.firebasestorage.app",
-  messagingSenderId: "520430593915",
-  appId: "1:520430593915:web:b8b1b8646a2f6ec7463fde",
-  measurementId: "G-5LPVR2ZLJY"
+    apiKey: "AIzaSyCCuZ2hPhw1TKwYs5gszoHelfT5c11BH9o",
+    authDomain: "aplicativo-de-financas.firebaseapp.com",
+    projectId: "aplicativo-de-financas",
+    storageBucket: "aplicativo-de-financas.appspot.com",
+    messagingSenderId: "520430593915",
+    appId: "1:520430593915:web:b8b1b8646a2f6ec7463fde",
+    measurementId: "G-5LPVR2ZLJY"
 };
 
 // Inicializa o Firebase
@@ -39,7 +41,7 @@ const auth = getAuth(app);
 // --- Função Utilitária ---
 const capitalizeFullName = (name) => {
     if (!name) return '';
-    return name.trim().split(' ').filter(word => word).map(word => 
+    return name.trim().split(' ').filter(word => word).map(word =>
         word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
     ).join(' ');
 };
@@ -48,14 +50,16 @@ const capitalizeFullName = (name) => {
 const Home = ({ db, userId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [view, setView] = useState('summary'); // 'summary', 'paid', 'pending'
-    const gamePlayersCollectionPath = "game_players"; // Caminho simplificado
+    const [view, setView] = useState('summary'); // 'summary', 'paid', 'pending', 'credit'
+    const [paymentInfo, setPaymentInfo] = useState(null);
+    const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
         if (!userId) return;
         setLoading(true);
+
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
                 playersData.push({ id: doc.id, ...doc.data() });
@@ -66,7 +70,20 @@ const Home = ({ db, userId }) => {
             console.error("Erro ao buscar jogadores do jogo: ", error);
             setLoading(false);
         });
-        return () => unsubscribe();
+
+        const paymentInfoRef = doc(db, "app_details", "paymentInfo");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
+            if (doc.exists()) {
+                setPaymentInfo(doc.data());
+            } else {
+                console.log("Documento de informações de pagamento não encontrado.");
+            }
+        });
+
+        return () => {
+            unsubscribePlayers();
+            unsubscribePaymentInfo();
+        };
     }, [db, userId]);
 
     const handleSendMessage = (player) => {
@@ -75,13 +92,26 @@ const Home = ({ db, userId }) => {
             console.error("Número de telefone inválido:", player.phone);
             return;
         }
-        const message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
-        const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-        window.open(whatsappUrl, '_blank');
+
+        let message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!`;
+
+        if (paymentInfo && paymentInfo.individualValue) {
+            message += `\n\nO valor é £${paymentInfo.individualValue}`;
+        }
+
+        message += `\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
+
+        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
+            window.AndroidBridge.openWhatsApp(cleanPhone, message);
+        } else {
+            const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+            window.open(whatsappUrl, '_blank');
+        }
     };
 
     const paidPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago');
-    const pendingPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pendente');
+    const pendingPlayers = gamePlayers.filter(p => p.paymentStatus !== 'Pago');
+    const creditPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
 
     const renderList = (list, title) => (
         <div>
@@ -110,13 +140,13 @@ const Home = ({ db, userId }) => {
     return (
         <div className="p-4 md:p-6">
             <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Resumo do Jogo</h1>
-            {loading ? <p className="text-center text-gray-500">Carregando resumo...</p> : 
+            {loading ? <p className="text-center text-gray-500">Carregando resumo...</p> :
             (view === 'summary' ? (
                 <>
-                    <div className="grid grid-cols-3 gap-4 text-center mb-8">
-                        <div className="bg-blue-100 p-4 rounded-lg shadow-sm">
+                    <div className="grid grid-cols-2 gap-4 text-center mb-8">
+                        <div className="bg-blue-100 p-4 rounded-lg shadow-sm col-span-2">
                             <p className="text-2xl font-bold text-blue-800">{gamePlayers.length}</p>
-                            <p className="text-sm text-blue-700">Total</p>
+                            <p className="text-sm text-blue-700">Total na Lista</p>
                         </div>
                         <button onClick={() => setView('paid')} className="bg-green-100 p-4 rounded-lg shadow-sm hover:bg-green-200 transition-colors">
                             <p className="text-2xl font-bold text-green-800">{paidPlayers.length}</p>
@@ -126,6 +156,10 @@ const Home = ({ db, userId }) => {
                             <p className="text-2xl font-bold text-yellow-800">{pendingPlayers.length}</p>
                             <p className="text-sm text-yellow-700">Pendentes</p>
                         </button>
+                        <button onClick={() => setView('credit')} className="bg-purple-100 p-4 rounded-lg shadow-sm hover:bg-purple-200 transition-colors col-span-2">
+                            <p className="text-2xl font-bold text-purple-800">{creditPlayers.length}</p>
+                            <p className="text-sm text-purple-700">Jogadores com Crédito</p>
+                        </button>
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
                         <h2 className="text-2xl font-semibold text-gray-700 mb-3">Seu ID de Administrador</h2>
@@ -133,7 +167,9 @@ const Home = ({ db, userId }) => {
                         <p className="text-lg font-mono bg-gray-100 p-3 rounded-md text-gray-800 break-all">{userId || 'Carregando...'}</p>
                     </div>
                 </>
-            ) : view === 'paid' ? renderList(paidPlayers, 'Jogadores que Pagaram') : renderList(pendingPlayers, 'Pendentes'))}
+            ) : view === 'paid' ? renderList(paidPlayers, 'Jogadores que Pagaram') 
+              : view === 'pending' ? renderList(pendingPlayers, 'Pendentes')
+              : renderList(creditPlayers, 'Jogadores com Crédito'))}
         </div>
     );
 };
@@ -262,32 +298,42 @@ const PlayerRegistration = ({ db, userId }) => {
     );
 };
 
-// --- Componente de Lista de Jogadores (Adicionados em Massa) ---
-const PlayerList = ({ db, userId }) => {
+// --- Componente Painel de Controlo ---
+const GameControlPanel = ({ db, userId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [newPlayersText, setNewPlayersText] = useState('');
     const [loading, setLoading] = useState(true);
     const [isClearModalOpen, setIsClearModalOpen] = useState(false);
-    const [playerToEdit, setPlayerToEdit] = useState(null);
+    const [paymentInfo, setPaymentInfo] = useState(null);
     const gamePlayersCollectionPath = "game_players";
     const contactsCollectionPath = "contacts";
+    const transactionsCollectionPath = "transactions";
 
     useEffect(() => {
         if (!userId) return;
         setLoading(true);
+        
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
                 playersData.push({ id: doc.id, ...doc.data() });
             });
             setGamePlayers(playersData);
             setLoading(false);
-        }, (error) => {
-            console.error("Erro ao buscar jogadores: ", error);
-            setLoading(false);
         });
-        return () => unsubscribe();
+
+        const paymentInfoRef = doc(db, "app_details", "paymentInfo");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
+            if (doc.exists()) {
+                setPaymentInfo(doc.data());
+            }
+        });
+
+        return () => {
+            unsubscribePlayers();
+            unsubscribePaymentInfo();
+        };
     }, [db, userId]);
 
     const addPlayerToGame = async (name) => {
@@ -304,29 +350,20 @@ const PlayerList = ({ db, userId }) => {
             name: formattedName,
             phone: contactData.phone,
             paymentStatus: 'Pendente',
+            played: false,
             createdAt: new Date(),
         });
     };
 
     const addPlayersInBulk = async () => {
         if (newPlayersText.trim() === '' || !userId) return;
-        
         const lines = newPlayersText.split('\n').filter(line => line.trim() !== '');
         if (lines.length === 0) return;
-        
         for (const line of lines) {
             const cleanedName = line.replace(/[\d.\-]/g, '').trim();
             await addPlayerToGame(cleanedName);
         }
         setNewPlayersText('');
-    };
-
-    const deletePlayer = async (id) => {
-        try {
-            await deleteDoc(doc(db, gamePlayersCollectionPath, id));
-        } catch (error) {
-            console.error("Erro ao deletar jogador: ", error);
-        }
     };
     
     const clearAllPlayers = async () => {
@@ -334,52 +371,37 @@ const PlayerList = ({ db, userId }) => {
         const deleteBatch = writeBatch(db);
         existingPlayersSnapshot.forEach(doc => deleteBatch.delete(doc.ref));
         await deleteBatch.commit();
-        
-        // Limpa também a divisão de times
         const dividedTeamsDocRef = doc(db, "divided_teams/current_division");
         await deleteDoc(dividedTeamsDocRef).catch(err => console.log("Nenhuma divisão de times para limpar."));
-
         setIsClearModalOpen(false);
     };
 
-    const handleUpdatePlayerName = async (playerId, newName) => {
-        const formattedName = capitalizeFullName(newName);
-        if (!formattedName) return;
-
+    const updatePlayerField = async (player, field, value) => {
         try {
-            // 1. Procura o novo nome na coleção de contatos
-            const contactsQuery = query(collection(db, contactsCollectionPath), where("name", "==", formattedName));
-            const contactsSnapshot = await getDocs(contactsQuery);
-            
-            let phone = ''; // Telefone padrão é vazio
-            if (!contactsSnapshot.empty) {
-                // 2. Se encontrar, pega o número de telefone
-                const contactData = contactsSnapshot.docs[0].data();
-                phone = contactData.phone || '';
+            const playerDocRef = doc(db, gamePlayersCollectionPath, player.id);
+            await setDoc(playerDocRef, { [field]: value }, { merge: true });
+
+            // AUTOMAÇÃO: Se o pagamento for alterado para "Pago", cria uma transação de entrada
+            if (field === 'paymentStatus' && value === 'Pago') {
+                const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+                if (individualValue > 0) {
+                    await addDoc(collection(db, transactionsCollectionPath), {
+                        description: `Pagamento: ${player.name}`,
+                        amount: individualValue,
+                        type: 'income',
+                        createdAt: serverTimestamp(),
+                    });
+                }
             }
-
-            // 3. Atualiza o jogador na lista da partida com o novo nome e telefone
-            const playerDocRef = doc(db, gamePlayersCollectionPath, playerId);
-            await setDoc(playerDocRef, { name: formattedName, phone: phone }, { merge: true });
-
         } catch (error) {
-            console.error("Erro ao atualizar jogador: ", error);
-        } finally {
-            setPlayerToEdit(null);
+            console.error(`Erro ao atualizar campo ${field}: `, error);
         }
     };
 
     return (
         <div className="p-4 md:p-6">
             {isClearModalOpen && <ClearAllConfirmationModal onConfirm={clearAllPlayers} onCancel={() => setIsClearModalOpen(false)} />}
-            {playerToEdit && (
-                <EditPlayerModal 
-                    player={playerToEdit}
-                    onSave={handleUpdatePlayerName}
-                    onCancel={() => setPlayerToEdit(null)}
-                />
-            )}
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Jogadores da Partida</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Painel de Controlo do Jogo</h2>
             
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
                 <h3 className="font-semibold text-gray-700 mb-2">Adicionar Jogadores</h3>
@@ -401,25 +423,25 @@ const PlayerList = ({ db, userId }) => {
             (<>
                 <ul className="space-y-3">
                     {gamePlayers.length > 0 ? gamePlayers.map(player => (
-                        <li key={player.id} className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                             <div>
-                                <p className="text-lg text-gray-800">{player.name}</p>
-                                {player.phone && <p className="text-sm text-gray-500">{player.phone}</p>}
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-                                <button onClick={() => setPlayerToEdit(player)} className="p-2 rounded-full bg-blue-500 hover:bg-blue-600 text-white transition-colors">
-                                    <EditIcon />
+                        <li key={player.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                             <div className="flex items-center justify-between">
+                                <p className="text-lg text-gray-800 font-medium">{player.name}</p>
+                                <button onClick={() => updatePlayerField(player, 'played', !player.played)} className={`px-3 py-1 text-xs font-bold rounded-full ${player.played ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                                    {player.played ? 'JOGOU' : 'NÃO JOGOU'}
                                 </button>
-                                <button onClick={() => deletePlayer(player.id)} className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors">
-                                    <TrashIcon />
+                             </div>
+                             <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                                <span className="text-sm text-gray-600">Pagamento:</span>
+                                <button onClick={() => updatePlayerField(player, 'paymentStatus', player.paymentStatus === 'Pago' ? 'Pendente' : 'Pago')} className={`px-3 py-1 text-xs font-bold rounded-full ${player.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
+                                    {player.paymentStatus === 'Pago' ? 'PAGO' : 'PENDENTE'}
                                 </button>
-                            </div>
+                             </div>
                         </li>
                     )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na lista da partida.</p>}
                 </ul>
                 {gamePlayers.length > 0 && (
                     <button onClick={() => setIsClearModalOpen(true)} className="w-full mt-6 bg-red-500 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-600 transition-colors">
-                        Apagar Todos
+                        Apagar Lista do Jogo
                     </button>
                 )}
             </>)}
@@ -427,8 +449,98 @@ const PlayerList = ({ db, userId }) => {
     );
 };
 
+// --- NOVO COMPONENTE: Finanças ---
+const Finances = ({ db, userId }) => {
+    const [transactions, setTransactions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [expenseDescription, setExpenseDescription] = useState('');
+    const [expenseAmount, setExpenseAmount] = useState('');
+    const transactionsCollectionPath = "transactions";
 
-// --- Componente Pagamentos ---
+    useEffect(() => {
+        if (!userId) return;
+        setLoading(true);
+        const q = query(collection(db, transactionsCollectionPath), orderBy("createdAt", "desc"));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const transactionsData = [];
+            querySnapshot.forEach((doc) => {
+                transactionsData.push({ id: doc.id, ...doc.data() });
+            });
+            setTransactions(transactionsData);
+            setLoading(false);
+        });
+        return () => unsubscribe();
+    }, [db, userId]);
+
+    const addExpense = async () => {
+        if (expenseDescription.trim() === '' || !expenseAmount || isNaN(parseFloat(expenseAmount))) return;
+        
+        try {
+            await addDoc(collection(db, transactionsCollectionPath), {
+                description: expenseDescription.trim(),
+                amount: parseFloat(expenseAmount),
+                type: 'expense',
+                createdAt: serverTimestamp(),
+            });
+            setExpenseDescription('');
+            setExpenseAmount('');
+        } catch (error) {
+            console.error("Erro ao adicionar despesa: ", error);
+        }
+    };
+
+    const deleteTransaction = async (id) => {
+        if (window.confirm("Tem a certeza que quer apagar esta transação?")) {
+            try {
+                await deleteDoc(doc(db, transactionsCollectionPath, id));
+            } catch (error) {
+                console.error("Erro ao apagar transação: ", error);
+            }
+        }
+    };
+
+    return (
+        <div className="p-4 md:p-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão Financeira</h2>
+
+            <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
+                <h3 className="font-semibold text-gray-700 mb-2">Adicionar Nova Despesa</h3>
+                <div className="space-y-3">
+                    <input type="text" value={expenseDescription} onChange={(e) => setExpenseDescription(e.target.value)} placeholder="Descrição (ex: Pagamento do campo)" className="w-full p-3 border border-gray-300 rounded-lg"/>
+                    <input type="number" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="Valor (£)" className="w-full p-3 border border-gray-300 rounded-lg"/>
+                </div>
+                <button onClick={addExpense} className="bg-red-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-700 w-full mt-3">
+                    Adicionar Despesa
+                </button>
+            </div>
+
+            {loading ? <p className="text-gray-500 text-center">A carregar transações...</p> :
+            (
+                <div>
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">Histórico de Transações</h3>
+                    <ul className="space-y-3">
+                        {transactions.length > 0 ? transactions.map(t => (
+                            <li key={t.id} className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm border">
+                                <div>
+                                    <p className="text-gray-800">{t.description}</p>
+                                    <p className={`font-bold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                        {t.type === 'income' ? '+' : '-'} £{t.amount.toFixed(2)}
+                                    </p>
+                                </div>
+                                <button onClick={() => deleteTransaction(t.id)} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
+                                    <TrashIcon />
+                                </button>
+                            </li>
+                        )) : <p className="text-center text-gray-500 py-4">Nenhuma transação registada.</p>}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+// --- Componente Pagamentos (Público) ---
 const PaymentControlList = ({ db, userId }) => {
     const [players, setPlayers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -616,8 +728,13 @@ Obrigado!!!`;
 
     const handleWhatsAppShare = () => {
         const message = generateMessage();
-        const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-        window.open(whatsappUrl, '_blank');
+        
+        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
+            window.AndroidBridge.openWhatsApp("", message);
+        } else {
+            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+            window.open(whatsappUrl, '_blank');
+        }
     };
 
     return (
@@ -849,7 +966,6 @@ const TeamDivision = ({ db, userId }) => {
 
     useEffect(() => {
         setLoading(true);
-        // Listener para a lista de jogadores
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
         const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
@@ -863,7 +979,6 @@ const TeamDivision = ({ db, userId }) => {
             setLoading(false);
         });
 
-        // Listener para a divisão de times salva
         const unsubscribeTeams = onSnapshot(doc(db, dividedTeamsDocPath), (docSnapshot) => {
             if (docSnapshot.exists()) {
                 setTeams(docSnapshot.data());
@@ -953,22 +1068,19 @@ const TeamDivision = ({ db, userId }) => {
 // --- Componente Principal App ---
 export default function App() {
     const [activeTab, setActiveTab] = useState('Pagamentos');
-    const [user, setUser] = useState(null); // Armazena o objeto de usuário completo
+    const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
-    // Deriva o estado de login e o ID do usuário a partir do objeto 'user'
     const isLoggedIn = user && !user.isAnonymous;
     const userId = user ? user.uid : null;
 
     useEffect(() => {
         const authListener = onAuthStateChanged(auth, (user) => {
             if (user) {
-                // Usuário está logado (seja anonimamente ou com e-mail)
                 setUser(user);
             } else {
-                // Usuário deslogou, então logamos anonimamente para o acesso público
                 signInAnonymously(auth).catch(error => console.error("Erro no login anônimo:", error));
             }
             setIsAuthReady(true);
@@ -991,9 +1103,7 @@ export default function App() {
     
     const handleLogout = () => {
         signOut(auth).then(() => {
-            // Limpa o estado do usuário explicitamente para forçar a UI a atualizar
             setUser(null); 
-            // Redireciona para a página pública
             setActiveTab('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
@@ -1003,24 +1113,18 @@ export default function App() {
             return <div className="flex justify-center items-center h-full"><p>Autenticando...</p></div>;
         }
 
-        // Rotas de Administrador
         if (isLoggedIn) {
             if (activeTab === 'Home') return <Home db={db} userId={userId} />;
             if (activeTab === 'Cadastros') return <PlayerRegistration db={db} userId={userId} />;
-            if (activeTab === 'Jogadores') return <PlayerList db={db} userId={userId} />;
+            if (activeTab === 'Painel de Controlo') return <GameControlPanel db={db} userId={userId} />;
+            if (activeTab === 'Finanças') return <Finances db={db} userId={userId} />;
             if (activeTab === 'Compartilhar Pagamento') return <SharePayment db={db} userId={userId} />;
         }
 
-        // Rotas Públicas (e padrão para não logado)
         if (activeTab === 'Pagamentos') return <PaymentControlList db={db} userId={userId} />;
         if (activeTab === 'Divisão de Times') return <TeamDivision db={db} userId={userId} />;
         if (activeTab === 'Cronômetro') return <Stopwatch />;
         
-        // Se o admin estiver em uma aba pública, ela será renderizada.
-        // Se um usuário público tentar acessar uma aba de admin (o que não deve acontecer
-        // pois o menu não mostra a opção), ele verá a tela de pagamentos.
-        
-        // Fallback final: se nada corresponder, mostre a tela de pagamentos
         return <PaymentControlList db={db} userId={userId} />;
     };
 
@@ -1057,7 +1161,8 @@ export default function App() {
                 <nav className="mt-4">
                     {isLoggedIn && <MenuItem tabName="Home" icon={<HomeIcon />} />}
                     {isLoggedIn && <MenuItem tabName="Cadastros" icon={<UserPlusIcon />} />}
-                    {isLoggedIn && <MenuItem tabName="Jogadores" icon={<UsersIcon />} />}
+                    {isLoggedIn && <MenuItem tabName="Painel de Controlo" icon={<UsersIcon />} />}
+                    {isLoggedIn && <MenuItem tabName="Finanças" icon={<FinanceIcon />} />}
                     <MenuItem tabName="Pagamentos" icon={<DollarSignIcon />} />
                     <MenuItem tabName="Divisão de Times" icon={<ShuffleIcon />} />
                     {isLoggedIn && <MenuItem tabName="Compartilhar Pagamento" icon={<WhatsAppIcon />} />}
@@ -1100,7 +1205,7 @@ const LoginModal = ({ onLogin, onClose }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError(''); // Limpa o erro anterior
+        setError('');
         const result = await onLogin(email, password);
         if (!result.success) {
             setError(result.message || 'Ocorreu um erro.');
@@ -1139,51 +1244,6 @@ const LoginModal = ({ onLogin, onClose }) => {
                         <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Entrar</button>
                     </div>
                 </form>
-            </div>
-        </div>
-    );
-};
-
-// --- Componente Modal de Edição de Jogador ---
-const EditPlayerModal = ({ player, onSave, onCancel }) => {
-    const [newName, setNewName] = useState(player.name);
-    const modalRef = useRef(null);
-
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (modalRef.current && !modalRef.current.contains(event.target)) {
-                onCancel();
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, [onCancel]);
-
-    const handleSave = () => {
-        if (newName.trim()) {
-            onSave(player.id, newName);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-40">
-            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
-                <h3 className="text-xl font-bold mb-4 text-center">Editar Jogador</h3>
-                <div className="space-y-4">
-                    <input 
-                        type="text" 
-                        value={newName} 
-                        onChange={(e) => setNewName(e.target.value)} 
-                        placeholder="Nome do jogador" 
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                </div>
-                <div className="mt-6 flex justify-end gap-4">
-                    <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancelar</button>
-                    <button type="button" onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Salvar</button>
-                </div>
             </div>
         </div>
     );
