@@ -48,7 +48,7 @@ const capitalizeFullName = (name) => {
 };
 
 // --- Componente Home ---
-const Home = ({ db, userId, navigateTo }) => {
+const Home = ({ db, userId, navigateTo, isLoggedIn }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [view, setView] = useState('summary');
@@ -57,8 +57,6 @@ const Home = ({ db, userId, navigateTo }) => {
     const [activeGameId, setActiveGameId] = useState(null);
     
     useEffect(() => {
-        if (!userId) return;
-
         const statusRef = doc(db, "app_status", "status");
         const unsubscribeStatus = onSnapshot(statusRef, (statusDoc) => {
             if (statusDoc.exists() && statusDoc.data().activeGameId) {
@@ -72,7 +70,12 @@ const Home = ({ db, userId, navigateTo }) => {
     }, [db, userId]);
 
     useEffect(() => {
-        if (!activeGameId) return;
+        if (!activeGameId) {
+            setGamePlayers([]);
+            setTransactions([]);
+            setLoading(false);
+            return;
+        };
 
         setLoading(true);
         const qPlayers = query(collection(db, "games", activeGameId, "players"), orderBy("createdAt"));
@@ -85,7 +88,7 @@ const Home = ({ db, userId, navigateTo }) => {
             setLoading(false);
         });
 
-        const qTransactions = query(collection(db, "transactions"));
+        const qTransactions = query(collection(db, "transactions"), where("gameId", "==", activeGameId));
         const unsubscribeTransactions = onSnapshot(qTransactions, (querySnapshot) => {
             const transactionsData = [];
             querySnapshot.forEach((transactionDoc) => {
@@ -123,8 +126,8 @@ const Home = ({ db, userId, navigateTo }) => {
         window.open(whatsappUrl, '_blank');
     };
 
-    const paidPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago');
-    const pendingPlayers = gamePlayers.filter(p => p.paymentStatus !== 'Pago');
+    const paidPlayers = gamePlayers.filter(p => p.paymentStatus.startsWith('Pago'));
+    const pendingPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pendente');
     const creditPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
 
     const totals = transactions.reduce((acc, t) => {
@@ -172,31 +175,35 @@ const Home = ({ db, userId, navigateTo }) => {
                             <p className="text-2xl font-bold text-blue-800">{gamePlayers.length}</p>
                             <p className="text-sm text-blue-700">Total na Lista</p>
                         </div>
-                        <button onClick={() => setView('paid')} className="bg-green-100 p-4 rounded-lg shadow-sm hover:bg-green-200 transition-colors">
-                            <p className="text-2xl font-bold text-green-800">{paidPlayers.length}</p>
-                            <p className="text-sm text-green-700">Pagaram</p>
-                        </button>
-                        <button onClick={() => setView('pending')} className="bg-yellow-100 p-4 rounded-lg shadow-sm hover:bg-yellow-200 transition-colors">
-                            <p className="text-2xl font-bold text-yellow-800">{pendingPlayers.length}</p>
-                            <p className="text-sm text-yellow-700">Pendentes</p>
-                        </button>
-                        <button onClick={() => setView('credit')} className="bg-purple-100 p-4 rounded-lg shadow-sm hover:bg-purple-200 transition-colors col-span-2">
-                            <p className="text-2xl font-bold text-purple-800">{creditPlayers.length}</p>
-                            <p className="text-sm text-purple-700">Jogadores com Crédito</p>
-                        </button>
+                        {isLoggedIn && (
+                            <>
+                                <button onClick={() => setView('paid')} className="bg-green-100 p-4 rounded-lg shadow-sm hover:bg-green-200 transition-colors">
+                                    <p className="text-2xl font-bold text-green-800">{paidPlayers.length}</p>
+                                    <p className="text-sm text-green-700">Pagaram</p>
+                                </button>
+                                <button onClick={() => setView('pending')} className="bg-yellow-100 p-4 rounded-lg shadow-sm hover:bg-yellow-200 transition-colors">
+                                    <p className="text-2xl font-bold text-yellow-800">{pendingPlayers.length}</p>
+                                    <p className="text-sm text-yellow-700">Pendentes</p>
+                                </button>
+                                <button onClick={() => setView('credit')} className="bg-purple-100 p-4 rounded-lg shadow-sm hover:bg-purple-200 transition-colors col-span-2">
+                                    <p className="text-2xl font-bold text-purple-800">{creditPlayers.length}</p>
+                                    <p className="text-sm text-purple-700">Jogadores com Crédito</p>
+                                </button>
+                            </>
+                        )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center mb-8">
                         <div className="bg-green-100 p-4 rounded-lg shadow-sm">
-                            <p className="text-sm text-green-700">Total Arrecadado</p>
+                            <p className="text-sm text-green-700">Arrecadado (Partida)</p>
                             <p className="text-2xl font-bold text-green-800">£{totals.income.toFixed(2)}</p>
                         </div>
                         <div className="bg-red-100 p-4 rounded-lg shadow-sm">
-                            <p className="text-sm text-red-700">Total Gasto</p>
+                            <p className="text-sm text-red-700">Gasto (Partida)</p>
                             <p className="text-2xl font-bold text-red-800">£{totals.expense.toFixed(2)}</p>
                         </div>
                         <div className="bg-blue-100 p-4 rounded-lg shadow-sm">
-                            <p className="text-sm text-blue-700">Saldo Atual</p>
+                            <p className="text-sm text-blue-700">Saldo (Partida)</p>
                             <p className="text-2xl font-bold text-blue-800">£{balance.toFixed(2)}</p>
                         </div>
                     </div>
@@ -420,7 +427,7 @@ const GameControlPanel = ({ db, userId, activeGameId, createFirstGame }) => {
     
         // 2. Assign credits
         if (individualValue > 0) {
-            const playersToCredit = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
+            const playersToCredit = gamePlayers.filter(p => p.paymentStatus.startsWith('Pago') && !p.played);
             for (const player of playersToCredit) {
                 const creditsQuery = query(collection(db, creditsCollectionPath), where("name", "==", player.name));
                 const querySnapshot = await getDocs(creditsQuery);
@@ -592,8 +599,8 @@ const GameControlPanel = ({ db, userId, activeGameId, createFirstGame }) => {
                                     <button onClick={() => updatePlayerField(player, 'played', !player.played)} className={`px-3 py-1 text-sm font-bold rounded-full ${player.played ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
                                         {player.played ? 'JOGOU' : 'NÃO JOGOU'}
                                     </button>
-                                    <button onClick={() => updatePlayerField(player, 'paymentStatus', player.paymentStatus === 'Pago' ? 'Pendente' : 'Pago')} className={`px-3 py-1 text-sm font-bold rounded-full ${player.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
-                                        {player.paymentStatus === 'Pago' ? 'PAGO' : 'PENDENTE'}
+                                    <button onClick={() => updatePlayerField(player, 'paymentStatus', player.paymentStatus === 'Pago' ? 'Pendente' : 'Pago')} className={`px-3 py-1 text-sm font-bold rounded-full ${player.paymentStatus.startsWith('Pago') ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
+                                        {player.paymentStatus}
                                     </button>
                                 </div>
                             </div>
@@ -689,14 +696,17 @@ const Finances = ({ db, userId, activeGameId }) => {
     const confirmDeleteGame = async () => {
         if (!gameToDelete) return;
         try {
+            const batch = writeBatch(db);
+            
             const transactionsQuery = query(collection(db, "transactions"), where("gameId", "==", gameToDelete.id));
             const transactionsSnapshot = await getDocs(transactionsQuery);
-            const batch = writeBatch(db);
             transactionsSnapshot.forEach(doc => {
                 batch.delete(doc.ref);
             });
+
             const gameRef = doc(db, "games", gameToDelete.id);
             batch.delete(gameRef);
+
             await batch.commit();
         } catch (error) {
             console.error("Erro ao apagar partida:", error);
@@ -770,6 +780,7 @@ const CreditManagement = ({ db, userId, activeGameId }) => {
     const [modalState, setModalState] = useState({ isOpen: false, message: '', onConfirm: () => {}, onCancel: () => {}, showCancel: false });
     const [creditToDelete, setCreditToDelete] = useState(null);
     const creditsCollectionPath = "credits";
+    const transactionsCollectionPath = "transactions";
 
     useEffect(() => {
         if (!userId) return;
@@ -829,7 +840,7 @@ const CreditManagement = ({ db, userId, activeGameId }) => {
             const creditRef = doc(db, creditsCollectionPath, credit.id);
             batch.update(creditRef, { amount: newBalance });
 
-            const transactionRef = doc(collection(db, "transactions"));
+            const transactionRef = doc(collection(db, transactionsCollectionPath));
             batch.set(transactionRef, {
                 description: `Pagamento (Crédito): ${credit.name}`,
                 amount: currentGameCost,
@@ -910,6 +921,7 @@ const PaymentControlList = ({ db, activeGameId }) => {
     const [loading, setLoading] = useState(true);
     const [playerToConfirm, setPlayerToConfirm] = useState(null);
     const [paymentInfo, setPaymentInfo] = useState(null);
+    const transactionsCollectionPath = "transactions";
     
     useEffect(() => {
         if (!activeGameId) {
@@ -946,7 +958,7 @@ const PaymentControlList = ({ db, activeGameId }) => {
     };
 
     const confirmPayment = async () => {
-        if (!playerToConfirm || playerToConfirm.paymentStatus === 'Pago' || !activeGameId) {
+        if (!playerToConfirm || playerToConfirm.paymentStatus.startsWith('Pago') || !activeGameId) {
             setPlayerToConfirm(null);
             return;
         }
@@ -957,7 +969,7 @@ const PaymentControlList = ({ db, activeGameId }) => {
 
         const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
         if (individualValue > 0) {
-            const transactionRef = doc(collection(db, "transactions"));
+            const transactionRef = doc(collection(db, transactionsCollectionPath));
             batch.set(transactionRef, {
                 description: `Pagamento: ${playerToConfirm.name}`,
                 amount: individualValue,
@@ -983,12 +995,12 @@ const PaymentControlList = ({ db, activeGameId }) => {
             return;
         }
 
-        if (playerToConfirm.paymentStatus === 'Pago') {
+        if (playerToConfirm.paymentStatus.startsWith('Pago')) {
             const batch = writeBatch(db);
             const playerDocRef = doc(db, `games/${activeGameId}/players`, playerToConfirm.id);
             batch.update(playerDocRef, { paymentStatus: 'Pendente' });
 
-            const q = query(collection(db, "transactions"), where("playerId", "==", playerToConfirm.id), where("gameId", "==", activeGameId));
+            const q = query(collection(db, transactionsCollectionPath), where("playerId", "==", playerToConfirm.id), where("gameId", "==", activeGameId));
             const querySnapshot = await getDocs(q);
             querySnapshot.forEach((doc) => {
                 batch.delete(doc.ref);
@@ -1004,7 +1016,7 @@ const PaymentControlList = ({ db, activeGameId }) => {
     };
 
     const getStatusColor = (status) => {
-        if (status === 'Pago' || status === 'Pago (Crédito)') {
+        if (status.startsWith('Pago')) {
             return 'bg-green-500';
         }
         return 'bg-yellow-500';
@@ -1610,7 +1622,7 @@ export default function App() {
 
         if (isLoggedIn) {
             switch (activeTab) {
-                case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} />;
+                case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
                 case 'Cadastros': return <PlayerRegistration db={db} userId={userId} />;
                 case 'Painel de Controlo': return <GameControlPanel db={db} userId={userId} activeGameId={activeGameId} createFirstGame={createFirstGame} />;
                 case 'Finanças': return <Finances db={db} userId={userId} activeGameId={activeGameId} />;
@@ -1620,6 +1632,7 @@ export default function App() {
         }
         
         switch (activeTab) {
+            case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
             case 'Pagamentos': return <PaymentControlList db={db} activeGameId={activeGameId} />;
             case 'Divisão de Times': return <TeamDivision db={db} userId={userId} activeGameId={activeGameId} />;
             case 'Cronômetro': return <Stopwatch />;
@@ -1655,7 +1668,7 @@ export default function App() {
                     </button>
                 </div>
                 <nav className="mt-4">
-                    {isLoggedIn && <MenuItem tabName="Home" icon={<HomeIcon />} />}
+                    <MenuItem tabName="Home" icon={<HomeIcon />} />
                     {isLoggedIn && <MenuItem tabName="Cadastros" icon={<UserPlusIcon />} />}
                     {isLoggedIn && <MenuItem tabName="Painel de Controlo" icon={<UsersIcon />} />}
                     {isLoggedIn && <MenuItem tabName="Finanças" icon={<FinanceIcon />} />}
