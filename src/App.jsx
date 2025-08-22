@@ -48,74 +48,93 @@ const capitalizeFullName = (name) => {
 };
 
 // --- Componente Home ---
-const Home = ({ db, userId }) => {
+const Home = ({ db, userId, navigateTo }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [view, setView] = useState('summary'); // 'summary', 'paid', 'pending', 'credit'
+    const [view, setView] = useState('summary');
+    const [transactions, setTransactions] = useState([]);
     const [paymentInfo, setPaymentInfo] = useState(null);
-    const gamePlayersCollectionPath = "game_players";
-
+    const [activeGameId, setActiveGameId] = useState(null);
+    
     useEffect(() => {
         if (!userId) return;
-        setLoading(true);
 
-        const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
-        const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
+        const statusRef = doc(db, "app_status", "status");
+        const unsubscribeStatus = onSnapshot(statusRef, (statusDoc) => {
+            if (statusDoc.exists() && statusDoc.data().activeGameId) {
+                setActiveGameId(statusDoc.data().activeGameId);
+            } else {
+                setLoading(false);
+            }
+        });
+
+        return () => unsubscribeStatus();
+    }, [db, userId]);
+
+    useEffect(() => {
+        if (!activeGameId) return;
+
+        setLoading(true);
+        const qPlayers = query(collection(db, "games", activeGameId, "players"), orderBy("createdAt"));
+        const unsubscribePlayers = onSnapshot(qPlayers, (querySnapshot) => {
             const playersData = [];
-            querySnapshot.forEach((doc) => {
-                playersData.push({ id: doc.id, ...doc.data() });
+            querySnapshot.forEach((playerDoc) => {
+                playersData.push({ id: playerDoc.id, ...playerDoc.data() });
             });
             setGamePlayers(playersData);
             setLoading(false);
-        }, (error) => {
-            console.error("Erro ao buscar jogadores do jogo: ", error);
-            setLoading(false);
         });
 
+        const qTransactions = query(collection(db, "transactions"));
+        const unsubscribeTransactions = onSnapshot(qTransactions, (querySnapshot) => {
+            const transactionsData = [];
+            querySnapshot.forEach((transactionDoc) => {
+                transactionsData.push({ id: transactionDoc.id, ...transactionDoc.data() });
+            });
+            setTransactions(transactionsData);
+        });
+        
         const paymentInfoRef = doc(db, "app_details", "paymentInfo");
-        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
-            if (doc.exists()) {
-                setPaymentInfo(doc.data());
-            } else {
-                console.log("Documento de informações de pagamento não encontrado.");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (paymentInfoDoc) => {
+            if (paymentInfoDoc.exists()) {
+                setPaymentInfo(paymentInfoDoc.data());
             }
         });
 
         return () => {
             unsubscribePlayers();
+            unsubscribeTransactions();
             unsubscribePaymentInfo();
         };
-    }, [db, userId]);
-
+    }, [db, activeGameId]);
+    
     const handleSendMessage = (player) => {
         const cleanPhone = player.phone.replace(/\D/g, '');
-        if (!cleanPhone) {
-            console.error("Número de telefone inválido:", player.phone);
-            return;
-        }
+        if (!cleanPhone) return;
 
         let message = `Olá ${player.name.split(' ')[0]}, tudo bem?\nPassando para lembrar que você precisa fazer o pagamento do futebol!!!`;
-
         if (paymentInfo && paymentInfo.individualValue) {
             message += `\n\nO valor é £${paymentInfo.individualValue}`;
         }
-
-        // Adicionando os dados da conta
         message += `\n\nDetalhes de Pagamento\nSort Cod: 20-26-82\nAccount : 23638502\nPaulo Simoes de Souza`;
-
         message += `\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
 
-        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
-            window.AndroidBridge.openWhatsApp(cleanPhone, message);
-        } else {
-            const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-            window.open(whatsappUrl, '_blank');
-        }
+        const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+        window.open(whatsappUrl, '_blank');
     };
 
     const paidPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago');
     const pendingPlayers = gamePlayers.filter(p => p.paymentStatus !== 'Pago');
     const creditPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
+
+    const totals = transactions.reduce((acc, t) => {
+        const amount = t.amount || 0;
+        if (t.type === 'income') acc.income += amount;
+        else if (t.type === 'expense') acc.expense += amount;
+        return acc;
+    }, { income: 0, expense: 0 });
+
+    const balance = totals.income - totals.expense;
 
     const renderList = (list, title) => (
         <div>
@@ -145,7 +164,8 @@ const Home = ({ db, userId }) => {
         <div className="p-4 md:p-6">
             <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Resumo do Jogo</h1>
             {loading ? <p className="text-center text-gray-500">Carregando resumo...</p> :
-            (view === 'summary' ? (
+            (
+                view === 'summary' ? (
                 <>
                     <div className="grid grid-cols-2 gap-4 text-center mb-8">
                         <div className="bg-blue-100 p-4 rounded-lg shadow-sm col-span-2">
@@ -165,15 +185,26 @@ const Home = ({ db, userId }) => {
                             <p className="text-sm text-purple-700">Jogadores com Crédito</p>
                         </button>
                     </div>
-                    <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-                        <h2 className="text-2xl font-semibold text-gray-700 mb-3">Seu ID de Administrador</h2>
-                        <p className="text-md text-gray-500 mb-4">Use este ID permanente nas regras de segurança do Firebase:</p>
-                        <p className="text-lg font-mono bg-gray-100 p-3 rounded-md text-gray-800 break-all">{userId || 'Carregando...'}</p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center mb-8">
+                        <div className="bg-green-100 p-4 rounded-lg shadow-sm">
+                            <p className="text-sm text-green-700">Total Arrecadado</p>
+                            <p className="text-2xl font-bold text-green-800">£{totals.income.toFixed(2)}</p>
+                        </div>
+                        <div className="bg-red-100 p-4 rounded-lg shadow-sm">
+                            <p className="text-sm text-red-700">Total Gasto</p>
+                            <p className="text-2xl font-bold text-red-800">£{totals.expense.toFixed(2)}</p>
+                        </div>
+                        <div className="bg-blue-100 p-4 rounded-lg shadow-sm">
+                            <p className="text-sm text-blue-700">Saldo Atual</p>
+                            <p className="text-2xl font-bold text-blue-800">£{balance.toFixed(2)}</p>
+                        </div>
                     </div>
                 </>
-            ) : view === 'paid' ? renderList(paidPlayers, 'Jogadores que Pagaram') 
-              : view === 'pending' ? renderList(pendingPlayers, 'Pendentes')
-              : renderList(creditPlayers, 'Jogadores com Crédito'))}
+                ) : view === 'paid' ? renderList(paidPlayers, 'Jogadores que Pagaram') 
+                  : view === 'pending' ? renderList(pendingPlayers, 'Pendentes')
+                  : renderList(creditPlayers, 'Jogadores com Crédito')
+            )}
         </div>
     );
 };
@@ -273,7 +304,7 @@ const PlayerRegistration = ({ db, userId }) => {
                 </button>
             </div>
 
-            {loading ? <p className="text-gray-500 text-center">Carregando jogadores...</p> : 
+            {loading ? <p className="text-center text-gray-500">Carregando jogadores...</p> : 
             (
                 <div>
                     <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">Jogadores Cadastrados</h3>
@@ -301,22 +332,29 @@ const PlayerRegistration = ({ db, userId }) => {
     );
 };
 
-// --- Componente Painel de Controlo ---
-const GameControlPanel = ({ db, userId }) => {
+// --- Componente Painel de Controle da Partida ---
+const GameControlPanel = ({ db, userId, activeGameId, createFirstGame }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [newPlayersText, setNewPlayersText] = useState('');
     const [loading, setLoading] = useState(true);
-    const [isClearModalOpen, setIsClearModalOpen] = useState(false);
     const [paymentInfo, setPaymentInfo] = useState(null);
-    const gamePlayersCollectionPath = "game_players";
+    const [playerToDelete, setPlayerToDelete] = useState(null);
+    const [playerToEdit, setPlayerToEdit] = useState(null);
+    const [modalState, setModalState] = useState({ isOpen: false, message: '', onConfirm: () => {}, onCancel: () => {} });
+
     const contactsCollectionPath = "contacts";
-    const transactionsCollectionPath = "transactions";
     const creditsCollectionPath = "credits";
+    const transactionsCollectionPath = "transactions";
 
     useEffect(() => {
-        if (!userId) return;
+        if (!userId || !activeGameId) {
+            setGamePlayers([]);
+            setLoading(false);
+            return;
+        };
+
         setLoading(true);
-        
+        const gamePlayersCollectionPath = `games/${activeGameId}/players`;
         const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
         const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
@@ -338,11 +376,11 @@ const GameControlPanel = ({ db, userId }) => {
             unsubscribePlayers();
             unsubscribePaymentInfo();
         };
-    }, [db, userId]);
+    }, [db, userId, activeGameId]);
 
     const addPlayerToGame = async (name) => {
         const formattedName = capitalizeFullName(name);
-        if (!formattedName) return;
+        if (!formattedName || !activeGameId) return;
 
         const contactsSnapshot = await getDocs(query(collection(db, contactsCollectionPath), where("name", "==", formattedName)));
         let contactData = { phone: '' };
@@ -350,12 +388,12 @@ const GameControlPanel = ({ db, userId }) => {
             contactData = contactsSnapshot.docs[0].data();
         }
 
-        await addDoc(collection(db, gamePlayersCollectionPath), {
+        await addDoc(collection(db, `games/${activeGameId}/players`), {
             name: formattedName,
             phone: contactData.phone,
             paymentStatus: 'Pendente',
-            played: false,
-            createdAt: new Date(),
+            played: true, // Default to true
+            createdAt: serverTimestamp(),
         });
     };
 
@@ -370,26 +408,31 @@ const GameControlPanel = ({ db, userId }) => {
         setNewPlayersText('');
     };
     
-    const finalizeAndClearGame = async () => {
+    const archiveAndStartNewGame = async () => {
+        if (!activeGameId) return;
+    
         const batch = writeBatch(db);
         const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
-
-        // 1. Atribuir créditos
+    
+        // 1. Archive current game
+        const currentGameRef = doc(db, "games", activeGameId);
+        batch.update(currentGameRef, { archived: true });
+    
+        // 2. Assign credits
         if (individualValue > 0) {
             const playersToCredit = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
-
             for (const player of playersToCredit) {
                 const creditsQuery = query(collection(db, creditsCollectionPath), where("name", "==", player.name));
                 const querySnapshot = await getDocs(creditsQuery);
-
+    
                 if (!querySnapshot.empty) {
                     const creditDoc = querySnapshot.docs[0];
                     const existingAmount = creditDoc.data().amount || 0;
                     const newAmount = existingAmount + individualValue;
                     batch.update(creditDoc.ref, { amount: newAmount });
                 } else {
-                    const creditRef = doc(collection(db, creditsCollectionPath));
-                    batch.set(creditRef, { 
+                    const newCreditRef = doc(collection(db, creditsCollectionPath));
+                    batch.set(newCreditRef, { 
                         name: player.name, 
                         amount: individualValue,
                         createdAt: serverTimestamp() 
@@ -397,50 +440,118 @@ const GameControlPanel = ({ db, userId }) => {
                 }
             }
         }
-
-        // 2. Limpar lista de jogadores do jogo
-        gamePlayers.forEach(player => {
-            const playerRef = doc(db, gamePlayersCollectionPath, player.id);
-            batch.delete(playerRef);
+    
+        // 3. Create new game
+        const newGameRef = doc(collection(db, "games"));
+        batch.set(newGameRef, { 
+            createdAt: serverTimestamp(),
+            archived: false 
         });
-        
-        // 3. Limpar divisão de times
-        const dividedTeamsDocRef = doc(db, "divided_teams/current_division");
-        batch.delete(dividedTeamsDocRef);
-
+    
+        // 4. Update active game status
+        const statusRef = doc(db, "app_status", "status");
+        batch.update(statusRef, { activeGameId: newGameRef.id });
+    
         try {
             await batch.commit();
+            setModalState({ isOpen: true, message: "Nova partida iniciada com sucesso!", onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
         } catch (error) {
-            console.error("Erro ao finalizar jogo: ", error);
+            console.error("Erro ao iniciar nova partida: ", error);
         }
-        setIsClearModalOpen(false);
     };
 
     const updatePlayerField = async (player, field, value) => {
-        try {
-            const playerDocRef = doc(db, gamePlayersCollectionPath, player.id);
-            await setDoc(playerDocRef, { [field]: value }, { merge: true });
-
-            if (field === 'paymentStatus' && value === 'Pago') {
-                const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
-                if (individualValue > 0) {
-                    await addDoc(collection(db, transactionsCollectionPath), {
-                        description: `Pagamento: ${player.name}`,
-                        amount: individualValue,
-                        type: 'income',
-                        createdAt: serverTimestamp(),
-                    });
-                }
+        const playerDocRef = doc(db, `games/${activeGameId}/players`, player.id);
+        const batch = writeBatch(db);
+        batch.update(playerDocRef, { [field]: value });
+    
+        const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+    
+        if (field === 'paymentStatus' && individualValue > 0) {
+            const transactionDescription = `Pagamento: ${player.name}`;
+            if (value === 'Pago') {
+                const transactionRef = doc(collection(db, transactionsCollectionPath));
+                batch.set(transactionRef, {
+                    description: transactionDescription,
+                    amount: individualValue,
+                    type: 'income',
+                    createdAt: serverTimestamp(),
+                    playerId: player.id,
+                    gameId: activeGameId
+                });
+            } else { 
+                const q = query(collection(db, transactionsCollectionPath), where("playerId", "==", player.id), where("gameId", "==", activeGameId));
+                const querySnapshot = await getDocs(q);
+                querySnapshot.forEach((doc) => {
+                    batch.delete(doc.ref);
+                });
             }
+        }
+    
+        try {
+            await batch.commit();
         } catch (error) {
             console.error(`Erro ao atualizar campo ${field}: `, error);
         }
     };
 
+    const handleUpdatePlayerName = async (playerId, newName) => {
+        const formattedName = capitalizeFullName(newName);
+        if (!formattedName) return;
+
+        try {
+            const contactsQuery = query(collection(db, contactsCollectionPath), where("name", "==", formattedName));
+            const querySnapshot = await getDocs(contactsQuery);
+
+            let phoneNumber = '';
+            if (!querySnapshot.empty) {
+                const contactDoc = querySnapshot.docs[0];
+                phoneNumber = contactDoc.data().phone || '';
+            }
+
+            const playerDocRef = doc(db, `games/${activeGameId}/players`, playerId);
+            await setDoc(playerDocRef, { 
+                name: formattedName,
+                phone: phoneNumber
+            }, { merge: true });
+
+        } catch (error) {
+            console.error("Erro ao atualizar nome e telefone do jogador:", error);
+        } finally {
+            setPlayerToEdit(null);
+        }
+    };
+
+    const confirmDeletePlayer = async () => {
+        if (!playerToDelete || !activeGameId) return;
+        try {
+            await deleteDoc(doc(db, `games/${activeGameId}/players`, playerToDelete.id));
+        } catch (error) {
+            console.error("Erro ao deletar jogador da partida:", error);
+        } finally {
+            setPlayerToDelete(null);
+        }
+    };
+
+    if (!activeGameId && userId) {
+        return (
+            <div className="p-4 md:p-6 text-center">
+                <h2 className="text-2xl font-bold text-gray-800 mb-6">Nenhuma Partida Ativa</h2>
+                <p className="text-gray-600 mb-4">Parece que é a primeira vez que você usa o app ou nenhuma partida foi iniciada.</p>
+                <button onClick={createFirstGame} className="bg-green-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-green-700 transition-colors">
+                    Iniciar a Primeira Partida
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div className="p-4 md:p-6">
-            {isClearModalOpen && <ConfirmationModal onConfirm={finalizeAndClearGame} onCancel={() => setIsClearModalOpen(false)} message="Tem a certeza que quer finalizar o jogo? Isto vai atribuir créditos e limpar a lista para a próxima partida." />}
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Painel de Controlo do Jogo</h2>
+            {modalState.isOpen && <AlertDialog message={modalState.message} onConfirm={modalState.onConfirm} showCancel={modalState.showCancel} onCancel={() => setModalState({ isOpen: false })} />}
+            {playerToEdit && <EditPlayerNameModal player={playerToEdit} onSave={handleUpdatePlayerName} onCancel={() => setPlayerToEdit(null)} />}
+            {playerToDelete && <ConfirmationModal onConfirm={confirmDeletePlayer} onCancel={() => setPlayerToDelete(null)} message={`Remover ${playerToDelete.name} da partida?`} />}
+            
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Painel de Controle da Partida</h2>
             
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
                 <h3 className="font-semibold text-gray-700 mb-2">Adicionar Jogadores</h3>
@@ -452,35 +563,46 @@ const GameControlPanel = ({ db, userId }) => {
                 />
                 <button
                     onClick={addPlayersInBulk}
-                    className="bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-300 w-full mt-2"
+                    disabled={!activeGameId}
+                    className="bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-300 w-full mt-2 disabled:bg-gray-400"
                 >
                     Adicionar da Lista
                 </button>
             </div>
 
-            {loading ? <p className="text-gray-500 text-center">Carregando lista...</p> :
+            {loading ? <p className="text-center text-gray-500">Carregando lista...</p> :
             (<>
-                <ul className="space-y-3">
+                <ul className="space-y-4">
                     {gamePlayers.length > 0 ? gamePlayers.map(player => (
-                        <li key={player.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                             <div className="flex items-center justify-between">
-                                <p className="text-lg text-gray-800 font-medium">{player.name}</p>
-                                <button onClick={() => updatePlayerField(player, 'played', !player.played)} className={`px-3 py-1 text-xs font-bold rounded-full ${player.played ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
-                                    {player.played ? 'JOGOU' : 'NÃO JOGOU'}
-                                </button>
-                             </div>
-                             <div className="flex items-center justify-between mt-3 pt-3 border-t">
-                                <span className="text-sm text-gray-600">Pagamento:</span>
-                                <button onClick={() => updatePlayerField(player, 'paymentStatus', player.paymentStatus === 'Pago' ? 'Pendente' : 'Pago')} className={`px-3 py-1 text-xs font-bold rounded-full ${player.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
-                                    {player.paymentStatus === 'Pago' ? 'PAGO' : 'PENDENTE'}
-                                </button>
-                             </div>
+                        <li key={player.id} className="bg-white p-4 rounded-lg shadow-md border border-gray-200 flex flex-col gap-4">
+                            <div className="text-center">
+                                <p className="text-xl text-gray-800 font-bold">{player.name}</p>
+                                {player.phone && <p className="text-sm text-gray-500 mt-1">{player.phone}</p>}
+                            </div>
+                            <div className="flex items-center justify-between border-t pt-4">
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => setPlayerToEdit(player)} className="p-2 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors">
+                                        <EditIcon />
+                                    </button>
+                                    <button onClick={() => setPlayerToDelete(player)} className="p-2 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors">
+                                        <TrashIcon />
+                                    </button>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => updatePlayerField(player, 'played', !player.played)} className={`px-3 py-1 text-sm font-bold rounded-full ${player.played ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                                        {player.played ? 'JOGOU' : 'NÃO JOGOU'}
+                                    </button>
+                                    <button onClick={() => updatePlayerField(player, 'paymentStatus', player.paymentStatus === 'Pago' ? 'Pendente' : 'Pago')} className={`px-3 py-1 text-sm font-bold rounded-full ${player.paymentStatus === 'Pago' ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
+                                        {player.paymentStatus === 'Pago' ? 'PAGO' : 'PENDENTE'}
+                                    </button>
+                                </div>
+                            </div>
                         </li>
-                    )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na lista da partida.</p>}
+                    )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na partida atual.</p>}
                 </ul>
                 {gamePlayers.length > 0 && (
-                    <button onClick={() => setIsClearModalOpen(true)} className="w-full mt-6 bg-red-500 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-600 transition-colors">
-                        Finalizar e Limpar Jogo
+                    <button onClick={() => setModalState({ isOpen: true, message: "Tem a certeza que quer arquivar esta partida e iniciar uma nova?", onConfirm: archiveAndStartNewGame, onCancel: () => setModalState({ isOpen: false }), showCancel: true })} className="w-full mt-6 bg-red-500 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-600 transition-colors">
+                        Arquivar e Iniciar Nova Partida
                     </button>
                 )}
             </>)}
@@ -489,37 +611,73 @@ const GameControlPanel = ({ db, userId }) => {
 };
 
 // --- Componente Finanças ---
-const Finances = ({ db, userId }) => {
-    const [transactions, setTransactions] = useState([]);
+const Finances = ({ db, userId, activeGameId }) => {
+    const [archivedGames, setArchivedGames] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expenseDescription, setExpenseDescription] = useState('');
     const [expenseAmount, setExpenseAmount] = useState('');
-    const transactionsCollectionPath = "transactions";
+    const [allTransactions, setAllTransactions] = useState([]);
+    const [gameToDelete, setGameToDelete] = useState(null);
 
     useEffect(() => {
         if (!userId) return;
-        setLoading(true);
-        const q = query(collection(db, transactionsCollectionPath), orderBy("createdAt", "desc"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const transactionsData = [];
-            querySnapshot.forEach((doc) => {
-                transactionsData.push({ id: doc.id, ...doc.data() });
-            });
-            setTransactions(transactionsData);
+
+        const qGames = query(collection(db, "games"));
+        const unsubscribeGames = onSnapshot(qGames, async (querySnapshot) => {
+            const gamesData = await Promise.all(querySnapshot.docs.map(async (gameDoc) => {
+                const gameData = gameDoc.data();
+                if (!gameData.archived) return null;
+
+                const transactionsQuery = query(collection(db, "transactions"), where("gameId", "==", gameDoc.id));
+                const transactionsSnapshot = await getDocs(transactionsQuery);
+                const transactions = [];
+                transactionsSnapshot.forEach(doc => transactions.push(doc.data()));
+                
+                const summary = transactions.reduce((acc, t) => {
+                    const amount = t.amount || 0;
+                    if (t.type === 'income') acc.income += amount;
+                    else if (t.type === 'expense') acc.expense += amount;
+                    return acc;
+                }, { income: 0, expense: 0 });
+
+                return {
+                    id: gameDoc.id,
+                    ...gameData,
+                    summary,
+                };
+            }));
+            
+            const filteredAndSortedGames = gamesData
+                .filter(game => game !== null)
+                .sort((a, b) => b.createdAt?.toDate() - a.createdAt?.toDate());
+
+            setArchivedGames(filteredAndSortedGames);
             setLoading(false);
         });
-        return () => unsubscribe();
+
+        const qAllTransactions = query(collection(db, "transactions"));
+        const unsubscribeAllTransactions = onSnapshot(qAllTransactions, (querySnapshot) => {
+            const transData = [];
+            querySnapshot.forEach(doc => transData.push(doc.data()));
+            setAllTransactions(transData);
+        });
+
+        return () => {
+            unsubscribeGames();
+            unsubscribeAllTransactions();
+        };
     }, [db, userId]);
 
     const addExpense = async () => {
-        if (expenseDescription.trim() === '' || !expenseAmount || isNaN(parseFloat(expenseAmount))) return;
+        if (expenseDescription.trim() === '' || !expenseAmount || isNaN(parseFloat(expenseAmount)) || !activeGameId) return;
         
         try {
-            await addDoc(collection(db, transactionsCollectionPath), {
+            await addDoc(collection(db, "transactions"), {
                 description: expenseDescription.trim(),
                 amount: parseFloat(expenseAmount),
                 type: 'expense',
                 createdAt: serverTimestamp(),
+                gameId: activeGameId
             });
             setExpenseDescription('');
             setExpenseAmount('');
@@ -528,75 +686,76 @@ const Finances = ({ db, userId }) => {
         }
     };
 
-    const deleteTransaction = async (id) => {
+    const confirmDeleteGame = async () => {
+        if (!gameToDelete) return;
         try {
-            await deleteDoc(doc(db, transactionsCollectionPath, id));
+            const transactionsQuery = query(collection(db, "transactions"), where("gameId", "==", gameToDelete.id));
+            const transactionsSnapshot = await getDocs(transactionsQuery);
+            const batch = writeBatch(db);
+            transactionsSnapshot.forEach(doc => {
+                batch.delete(doc.ref);
+            });
+            const gameRef = doc(db, "games", gameToDelete.id);
+            batch.delete(gameRef);
+            await batch.commit();
         } catch (error) {
-            console.error("Erro ao apagar transação: ", error);
+            console.error("Erro ao apagar partida:", error);
+        } finally {
+            setGameToDelete(null);
         }
     };
 
-    const totals = transactions.reduce((acc, t) => {
-        const amount = t.amount || 0; // Garante que o valor é um número
-        if (t.type === 'income') {
-            acc.income += amount;
-        } else if (t.type === 'expense') {
-            acc.expense += amount;
-        }
+    const overallTotals = allTransactions.reduce((acc, t) => {
+        const amount = t.amount || 0;
+        if (t.type === 'income') acc.income += amount;
+        else if (t.type === 'expense') acc.expense += amount;
         return acc;
     }, { income: 0, expense: 0 });
 
-    const balance = totals.income - totals.expense;
+    const overallBalance = overallTotals.income - overallTotals.expense;
 
     return (
         <div className="p-4 md:p-6">
+            {gameToDelete && <ConfirmationModal message={`Tem a certeza que quer apagar a partida de ${new Date(gameToDelete.createdAt?.toDate()).toLocaleDateString('pt-BR')}? Esta ação é irreversível.`} onConfirm={confirmDeleteGame} onCancel={() => setGameToDelete(null)} />}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão Financeira</h2>
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center mb-8">
-                <div className="bg-green-100 p-4 rounded-lg shadow-sm">
-                    <p className="text-sm text-green-700">Total Arrecadado</p>
-                    <p className="text-2xl font-bold text-green-800">£{totals.income.toFixed(2)}</p>
-                </div>
-                <div className="bg-red-100 p-4 rounded-lg shadow-sm">
-                    <p className="text-sm text-red-700">Total Gasto</p>
-                    <p className="text-2xl font-bold text-red-800">£{totals.expense.toFixed(2)}</p>
-                </div>
-                <div className="bg-blue-100 p-4 rounded-lg shadow-sm">
-                    <p className="text-sm text-blue-700">Saldo Atual</p>
-                    <p className="text-2xl font-bold text-blue-800">£{balance.toFixed(2)}</p>
-                </div>
+            <div className="bg-blue-100 p-4 rounded-lg shadow-sm text-center mb-8">
+                <p className="text-sm text-blue-700">Saldo Geral em Caixa</p>
+                <p className="text-3xl font-bold text-blue-800">£{overallBalance.toFixed(2)}</p>
             </div>
 
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
-                <h3 className="font-semibold text-gray-700 mb-2">Adicionar Nova Despesa</h3>
+                <h3 className="font-semibold text-gray-700 mb-2">Adicionar Despesa (Partida Atual)</h3>
                 <div className="space-y-3">
                     <input type="text" value={expenseDescription} onChange={(e) => setExpenseDescription(e.target.value)} placeholder="Descrição (ex: Pagamento do campo)" className="w-full p-3 border border-gray-300 rounded-lg"/>
                     <input type="number" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="Valor (£)" className="w-full p-3 border border-gray-300 rounded-lg"/>
                 </div>
-                <button onClick={addExpense} className="bg-red-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-700 w-full mt-3">
+                <button onClick={addExpense} disabled={!activeGameId} className="bg-red-600 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-700 w-full mt-3 disabled:bg-gray-400">
                     Adicionar Despesa
                 </button>
             </div>
 
-            {loading ? <p className="text-gray-500 text-center">A carregar transações...</p> :
+            {loading ? <p className="text-center text-gray-500">A carregar histórico...</p> :
             (
                 <div>
-                    <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">Histórico de Transações</h3>
-                    <ul className="space-y-3">
-                        {transactions.length > 0 ? transactions.map(t => (
-                            <li key={t.id} className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm border">
-                                <div>
-                                    <p className="text-gray-800">{t.description}</p>
-                                    <p className={`font-bold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                        {t.type === 'income' ? '+' : '-'} £{(t.amount || 0).toFixed(2)}
-                                    </p>
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">Histórico de Partidas</h3>
+                    <div className="space-y-3">
+                        {archivedGames.length > 0 ? archivedGames.map(game => (
+                            <details key={game.id} className="bg-white p-4 rounded-lg shadow-sm border">
+                                <summary className="font-semibold cursor-pointer flex justify-between items-center">
+                                    <span>Partida de {new Date(game.createdAt?.toDate()).toLocaleDateString('pt-BR')}</span>
+                                    <button onClick={(e) => { e.preventDefault(); setGameToDelete(game); }} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
+                                        <TrashIcon />
+                                    </button>
+                                </summary>
+                                <div className="mt-4 pt-4 border-t">
+                                    <p><strong>Arrecadado:</strong> <span className="text-green-600">£{game.summary.income.toFixed(2)}</span></p>
+                                    <p><strong>Gasto:</strong> <span className="text-red-600">£{game.summary.expense.toFixed(2)}</span></p>
+                                    <p className="font-bold mt-2">Saldo da Partida: <span className={game.summary.income - game.summary.expense >= 0 ? 'text-blue-600' : 'text-red-600'}>£{(game.summary.income - game.summary.expense).toFixed(2)}</span></p>
                                 </div>
-                                <button onClick={() => deleteTransaction(t.id)} className="p-2 rounded-full hover:bg-gray-100 text-gray-500">
-                                    <TrashIcon />
-                                </button>
-                            </li>
-                        )) : <p className="text-center text-gray-500 py-4">Nenhuma transação registada.</p>}
-                    </ul>
+                            </details>
+                        )) : <p className="text-center text-gray-500 py-4">Nenhuma partida arquivada.</p>}
+                    </div>
                 </div>
             )}
         </div>
@@ -604,13 +763,13 @@ const Finances = ({ db, userId }) => {
 };
 
 // --- Componente Gestão de Créditos ---
-const CreditManagement = ({ db, userId }) => {
+const CreditManagement = ({ db, userId, activeGameId }) => {
     const [credits, setCredits] = useState([]);
     const [loading, setLoading] = useState(true);
     const [paymentInfo, setPaymentInfo] = useState(null);
     const [modalState, setModalState] = useState({ isOpen: false, message: '', onConfirm: () => {}, onCancel: () => {}, showCancel: false });
+    const [creditToDelete, setCreditToDelete] = useState(null);
     const creditsCollectionPath = "credits";
-    const gamePlayersCollectionPath = "game_players";
 
     useEffect(() => {
         if (!userId) return;
@@ -639,28 +798,23 @@ const CreditManagement = ({ db, userId }) => {
     }, [db, userId]);
 
     const useCredit = async (credit) => {
-        const currentGameCost = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
-        
-        if (currentGameCost <= 0) {
-            setModalState({
-                isOpen: true,
-                message: "O valor individual da partida atual não foi definido. Edite as informações de pagamento primeiro.",
-                onConfirm: () => setModalState({ isOpen: false }),
-                showCancel: false,
-            });
+        if (!activeGameId) {
+            setModalState({ isOpen: true, message: "Não há uma partida ativa para usar o crédito.", onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
             return;
         }
 
-        const q = query(collection(db, gamePlayersCollectionPath), where("name", "==", credit.name));
+        const currentGameCost = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+        
+        if (currentGameCost <= 0) {
+            setModalState({ isOpen: true, message: "O valor individual da partida atual não foi definido.", onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
+            return;
+        }
+
+        const q = query(collection(db, `games/${activeGameId}/players`), where("name", "==", credit.name));
         const gamePlayersSnapshot = await getDocs(q);
 
         if (gamePlayersSnapshot.empty) {
-            setModalState({
-                isOpen: true,
-                message: `Jogador "${credit.name}" não encontrado na lista da partida atual. Adicione-o primeiro.`,
-                onConfirm: () => setModalState({ isOpen: false }),
-                showCancel: false,
-            });
+            setModalState({ isOpen: true, message: `Jogador "${credit.name}" não encontrado na lista da partida atual.`, onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
             return;
         }
 
@@ -668,30 +822,29 @@ const CreditManagement = ({ db, userId }) => {
             const creditAmount = credit.amount || 0;
             const newBalance = creditAmount - currentGameCost;
             const batch = writeBatch(db);
-
             const playerDoc = gamePlayersSnapshot.docs[0];
-            const playerRef = doc(db, gamePlayersCollectionPath, playerDoc.id);
-            batch.update(playerRef, { paymentStatus: 'Pago' });
-
+            const playerRef = doc(db, `games/${activeGameId}/players`, playerDoc.id);
+            batch.update(playerRef, { paymentStatus: 'Pago (Crédito)' });
+            
             const creditRef = doc(db, creditsCollectionPath, credit.id);
             batch.update(creditRef, { amount: newBalance });
 
+            const transactionRef = doc(collection(db, "transactions"));
+            batch.set(transactionRef, {
+                description: `Pagamento (Crédito): ${credit.name}`,
+                amount: currentGameCost,
+                type: 'income',
+                createdAt: serverTimestamp(),
+                playerId: playerDoc.id,
+                gameId: activeGameId
+            });
+
             try {
                 await batch.commit();
-                setModalState({
-                    isOpen: true,
-                    message: `Crédito de ${credit.name} utilizado com sucesso!`,
-                    onConfirm: () => setModalState({ isOpen: false }),
-                    showCancel: false,
-                });
+                setModalState({ isOpen: true, message: `Crédito de ${credit.name} utilizado com sucesso!`, onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
             } catch (error) {
                 console.error("Erro ao usar crédito: ", error);
-                setModalState({
-                    isOpen: true,
-                    message: "Ocorreu um erro ao tentar usar o crédito.",
-                    onConfirm: () => setModalState({ isOpen: false }),
-                    showCancel: false,
-                });
+                setModalState({ isOpen: true, message: "Ocorreu um erro ao tentar usar o crédito.", onConfirm: () => setModalState({ isOpen: false }), showCancel: false });
             }
         };
         
@@ -700,31 +853,28 @@ const CreditManagement = ({ db, userId }) => {
         const confirmationMessage = `Deseja usar £${currentGameCost.toFixed(2)} do crédito de ${credit.name}?\n\n` +
                                   `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
 
-        setModalState({
-            isOpen: true,
-            message: confirmationMessage,
-            onConfirm: () => {
-                setModalState({ isOpen: false });
-                performCreditUpdate();
-            },
-            onCancel: () => setModalState({ isOpen: false }),
-            showCancel: true,
-        });
+        setModalState({ isOpen: true, message: confirmationMessage, onConfirm: () => { setModalState({ isOpen: false }); performCreditUpdate(); }, onCancel: () => setModalState({ isOpen: false }), showCancel: true });
+    };
+
+    const confirmDeleteCredit = async () => {
+        if (!creditToDelete) return;
+        try {
+            await deleteDoc(doc(db, creditsCollectionPath, creditToDelete.id));
+        } catch (error) {
+            console.error("Erro ao apagar crédito:", error);
+        } finally {
+            setCreditToDelete(null);
+        }
     };
 
     return (
         <div className="p-4 md:p-6">
-            {modalState.isOpen && (
-                <AlertDialog 
-                    message={modalState.message}
-                    onConfirm={modalState.onConfirm}
-                    onCancel={modalState.onCancel}
-                    showCancel={modalState.showCancel}
-                />
-            )}
+            {modalState.isOpen && <AlertDialog message={modalState.message} onConfirm={modalState.onConfirm} onCancel={modalState.onCancel} showCancel={modalState.showCancel} />}
+            {creditToDelete && <ConfirmationModal message={`Tem a certeza que quer apagar o crédito de ${creditToDelete.name}?`} onConfirm={confirmDeleteCredit} onCancel={() => setCreditToDelete(null)} />}
+            
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão de Créditos</h2>
 
-            {loading ? <p className="text-gray-500 text-center">A carregar créditos...</p> :
+            {loading ? <p className="text-center text-gray-500">A carregar créditos...</p> :
             (
                 <div>
                     <ul className="space-y-3">
@@ -736,9 +886,14 @@ const CreditManagement = ({ db, userId }) => {
                                         {' '}£{(credit.amount || 0).toFixed(2)}
                                     </span>
                                 </p>
-                                <button onClick={() => useCredit(credit)} className="bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg shadow-md hover:bg-blue-700">
-                                    Usar Crédito
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => useCredit(credit)} className="bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg shadow-md hover:bg-blue-700">
+                                        Usar Crédito
+                                    </button>
+                                    <button onClick={() => setCreditToDelete(credit)} className="p-2 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors">
+                                        <TrashIcon />
+                                    </button>
+                                </div>
                             </li>
                         )) : <p className="text-center text-gray-500 py-4">Nenhum jogador com crédito.</p>}
                     </ul>
@@ -750,15 +905,20 @@ const CreditManagement = ({ db, userId }) => {
 
 
 // --- Componente Pagamentos (Público) ---
-const PaymentControlList = ({ db, userId }) => {
+const PaymentControlList = ({ db, activeGameId }) => {
     const [players, setPlayers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [playerToConfirm, setPlayerToConfirm] = useState(null);
-    const gamePlayersCollectionPath = "game_players";
-
+    const [paymentInfo, setPaymentInfo] = useState(null);
+    
     useEffect(() => {
+        if (!activeGameId) {
+            setPlayers([]);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
-        const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
+        const q = query(collection(db, `games/${activeGameId}/players`), orderBy("createdAt"));
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
@@ -766,44 +926,88 @@ const PaymentControlList = ({ db, userId }) => {
             });
             setPlayers(playersData);
             setLoading(false);
-        }, (error) => {
-            console.error("Erro ao buscar lista de pagamentos:", error);
-            setLoading(false);
         });
 
-        return () => unsubscribe();
-    }, [db]);
+        const paymentInfoRef = doc(db, "app_details", "paymentInfo");
+        const unsubscribePaymentInfo = onSnapshot(paymentInfoRef, (doc) => {
+            if (doc.exists()) {
+                setPaymentInfo(doc.data());
+            }
+        });
+
+        return () => {
+            unsubscribe();
+            unsubscribePaymentInfo();
+        };
+    }, [db, activeGameId]);
 
     const handleStatusClick = (player) => {
         setPlayerToConfirm(player);
     };
 
     const confirmPayment = async () => {
-        if (!playerToConfirm || playerToConfirm.paymentStatus === 'Pago') {
+        if (!playerToConfirm || playerToConfirm.paymentStatus === 'Pago' || !activeGameId) {
             setPlayerToConfirm(null);
             return;
         }
+        
+        const batch = writeBatch(db);
+        const playerDocRef = doc(db, `games/${activeGameId}/players`, playerToConfirm.id);
+        batch.update(playerDocRef, { paymentStatus: 'Pago' });
+
+        const individualValue = parseFloat(paymentInfo?.individualValue?.replace(',', '.') || '0');
+        if (individualValue > 0) {
+            const transactionRef = doc(collection(db, "transactions"));
+            batch.set(transactionRef, {
+                description: `Pagamento: ${playerToConfirm.name}`,
+                amount: individualValue,
+                type: 'income',
+                createdAt: serverTimestamp(),
+                playerId: playerToConfirm.id,
+                gameId: activeGameId
+            });
+        }
+        
         try {
-            const playerDocRef = doc(db, gamePlayersCollectionPath, playerToConfirm.id);
-            await setDoc(playerDocRef, { paymentStatus: 'Pago' }, { merge: true });
+            await batch.commit();
         } catch (error) {
-            console.error("Erro ao atualizar pagamento: ", error);
+            console.error("Erro ao confirmar pagamento: ", error);
         } finally {
             setPlayerToConfirm(null);
         }
     };
 
     const cancelOrRevertPayment = async () => {
-        if (!playerToConfirm) return;
+        if (!playerToConfirm || !activeGameId) {
+            setPlayerToConfirm(null);
+            return;
+        }
+
         if (playerToConfirm.paymentStatus === 'Pago') {
-             try {
-                const playerDocRef = doc(db, gamePlayersCollectionPath, playerToConfirm.id);
-                await setDoc(playerDocRef, { paymentStatus: 'Pendente' }, { merge: true });
+            const batch = writeBatch(db);
+            const playerDocRef = doc(db, `games/${activeGameId}/players`, playerToConfirm.id);
+            batch.update(playerDocRef, { paymentStatus: 'Pendente' });
+
+            const q = query(collection(db, "transactions"), where("playerId", "==", playerToConfirm.id), where("gameId", "==", activeGameId));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach((doc) => {
+                batch.delete(doc.ref);
+            });
+            
+            try {
+                await batch.commit();
             } catch (error) {
                 console.error("Erro ao reverter pagamento: ", error);
             }
         }
         setPlayerToConfirm(null);
+    };
+
+    const getStatusColor = (status) => {
+        if (status === 'Pago' || status === 'Pago (Crédito)') {
+            return 'bg-green-500';
+        }
+        return 'bg-yellow-500';
     };
 
     return (
@@ -817,7 +1021,7 @@ const PaymentControlList = ({ db, userId }) => {
             )}
             <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">Confirmação de Pagamento</h2>
             {loading ? (
-                <p className="text-gray-500 text-center">Carregando lista...</p>
+                <p className="text-center text-gray-500">Carregando lista...</p>
             ) : (
                 <ul className="space-y-2">
                     {players.length > 0 ? players.map(player => (
@@ -825,12 +1029,12 @@ const PaymentControlList = ({ db, userId }) => {
                             <p className="text-lg text-gray-800">{player.name}</p>
                             <button
                                 onClick={() => handleStatusClick(player)}
-                                className={`px-4 py-2 text-sm font-semibold rounded-full text-white flex-shrink-0 ml-4 ${player.paymentStatus === 'Pago' ? 'bg-green-500' : 'bg-yellow-500'}`}
+                                className={`px-4 py-2 text-sm font-semibold rounded-full text-white flex-shrink-0 ml-4 ${getStatusColor(player.paymentStatus)}`}
                             >
                                 {player.paymentStatus}
                             </button>
                         </li>
-                    )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na lista da partida.</p>}
+                    )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na partida atual.</p>}
                 </ul>
             )}
         </div>
@@ -1195,18 +1399,22 @@ const Stopwatch = () => {
 };
 
 // --- Componente Divisão de Times ---
-const TeamDivision = ({ db, userId }) => {
+const TeamDivision = ({ db, userId, activeGameId }) => {
     const [gamePlayers, setGamePlayers] = useState([]);
     const [teams, setTeams] = useState({ red: [], yellow: [], green: [] });
     const [loading, setLoading] = useState(true);
     const [hasBeenDivided, setHasBeenDivided] = useState(false);
     const [isRedivideModalOpen, setIsRedivideModalOpen] = useState(false);
-    const gamePlayersCollectionPath = "game_players";
-    const dividedTeamsDocPath = "divided_teams/current_division";
-
+    
     useEffect(() => {
+        if (!activeGameId) {
+            setGamePlayers([]);
+            setTeams({ red: [], yellow: [], green: [] });
+            setLoading(false);
+            return;
+        }
         setLoading(true);
-        const q = query(collection(db, gamePlayersCollectionPath), orderBy("createdAt"));
+        const q = query(collection(db, `games/${activeGameId}/players`), orderBy("createdAt"));
         const unsubscribePlayers = onSnapshot(q, (querySnapshot) => {
             const playersData = [];
             querySnapshot.forEach((doc) => {
@@ -1214,11 +1422,9 @@ const TeamDivision = ({ db, userId }) => {
             });
             setGamePlayers(playersData);
             setLoading(false);
-        }, (error) => {
-            console.error("Erro ao buscar jogadores do jogo: ", error);
-            setLoading(false);
         });
 
+        const dividedTeamsDocPath = `games/${activeGameId}/division/teams`;
         const unsubscribeTeams = onSnapshot(doc(db, dividedTeamsDocPath), (docSnapshot) => {
             if (docSnapshot.exists()) {
                 setTeams(docSnapshot.data());
@@ -1233,22 +1439,19 @@ const TeamDivision = ({ db, userId }) => {
             unsubscribePlayers();
             unsubscribeTeams();
         };
-    }, [db]);
+    }, [db, activeGameId]);
     
     const performDivision = async () => {
         const shuffledPlayers = [...gamePlayers].sort(() => Math.random() - 0.5);
         const newTeams = { red: [], yellow: [], green: [] };
         shuffledPlayers.forEach((player, index) => {
-            if (index % 3 === 0) {
-                newTeams.red.push(player);
-            } else if (index % 3 === 1) {
-                newTeams.yellow.push(player);
-            } else {
-                newTeams.green.push(player);
-            }
+            if (index % 3 === 0) newTeams.red.push(player);
+            else if (index % 3 === 1) newTeams.yellow.push(player);
+            else newTeams.green.push(player);
         });
         
         try {
+            const dividedTeamsDocPath = `games/${activeGameId}/division/teams`;
             await setDoc(doc(db, dividedTeamsDocPath), newTeams);
             setHasBeenDivided(true);
             setIsRedivideModalOpen(false);
@@ -1307,16 +1510,16 @@ const TeamDivision = ({ db, userId }) => {
 
 // --- Componente Principal App ---
 export default function App() {
-    const [activeTab, setActiveTab] = useState(''); // Estado inicial vazio, será definido pelo URL
+    const [activeTab, setActiveTab] = useState('');
     const [user, setUser] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+    const [activeGameId, setActiveGameId] = useState(null);
 
     const isLoggedIn = user && !user.isAnonymous;
     const userId = user ? user.uid : null;
 
-    // Efeito para autenticação
     useEffect(() => {
         const authListener = onAuthStateChanged(auth, (user) => {
             if (user) {
@@ -1327,44 +1530,54 @@ export default function App() {
             setIsAuthReady(true);
         });
 
-        return () => authListener();
+        const statusRef = doc(db, "app_status", "status");
+        const unsubscribeStatus = onSnapshot(statusRef, (statusDoc) => {
+            if (statusDoc.exists() && statusDoc.data().activeGameId) {
+                setActiveGameId(statusDoc.data().activeGameId);
+            } else {
+                setActiveGameId(null); // No active game
+            }
+        });
+
+        return () => {
+            authListener();
+            unsubscribeStatus();
+        };
     }, []);
 
-    // NOVO: Efeito para controlar a navegação via URL hash
+    useEffect(() => {
+        if (isLoggedIn && !activeGameId) {
+            const statusRef = doc(db, "app_status", "status");
+            getDoc(statusRef).then(statusDoc => {
+                if (!statusDoc.exists() || !statusDoc.data().activeGameId) {
+                    createFirstGame();
+                }
+            });
+        }
+    }, [isLoggedIn, activeGameId]);
+
     useEffect(() => {
         const handleHashChange = () => {
-            const hash = window.location.hash.substring(1); // Remove o '#'
+            const hash = window.location.hash.substring(1);
             const decodedHash = decodeURIComponent(hash);
-
-            // Define a aba ativa com base no hash, ou um valor padrão se não houver hash
             const defaultTab = isLoggedIn ? 'Home' : 'Pagamentos';
             setActiveTab(decodedHash || defaultTab);
         };
-
-        // Adiciona o listener para o evento hashchange
         window.addEventListener('hashchange', handleHashChange, false);
-
-        // Define a aba inicial ao carregar a página
         handleHashChange();
+        return () => window.removeEventListener('hashchange', handleHashChange, false);
+    }, [isLoggedIn]);
 
-        // Limpa o listener quando o componente é desmontado
-        return () => {
-            window.removeEventListener('hashchange', handleHashChange, false);
-        };
-    }, [isLoggedIn]); // Re-executa se o status de login mudar
-
-    // NOVO: Função para mudar de aba e atualizar o URL
     const navigateTo = (tabName) => {
         window.location.hash = encodeURIComponent(tabName);
-        setIsMenuOpen(false); // Fecha o menu ao navegar
+        setIsMenuOpen(false);
     };
-
 
     const handleLogin = async (email, password) => {
         try {
             await signInWithEmailAndPassword(auth, email, password);
             setIsLoginModalOpen(false);
-            navigateTo('Home'); // Navega para Home após o login
+            navigateTo('Home');
             return { success: true };
         } catch (error) {
             console.error("Erro de login:", error);
@@ -1375,31 +1588,43 @@ export default function App() {
     const handleLogout = () => {
         signOut(auth).then(() => {
             setUser(null); 
-            navigateTo('Pagamentos'); // Navega para Pagamentos após o logout
+            navigateTo('Pagamentos');
         }).catch(error => console.error("Erro no logout:", error));
     };
 
+    const createFirstGame = async () => {
+        const statusRef = doc(db, "app_status", "status");
+        const newGameRef = doc(collection(db, "games"));
+        await setDoc(newGameRef, { createdAt: serverTimestamp(), archived: false });
+        await setDoc(statusRef, { activeGameId: newGameRef.id });
+        // setActiveGameId will be updated by the onSnapshot listener
+    };
+
     const renderContent = () => {
-        if (!isAuthReady || !activeTab) {
-            return <div className="flex justify-center items-center h-full"><p>Carregando...</p></div>;
+        if (!isAuthReady) {
+            return <div className="flex justify-center items-center h-full"><p>Autenticando...</p></div>;
+        }
+        if (!activeGameId && !isLoggedIn) {
+            return <div className="p-4 text-center">Nenhuma partida ativa no momento.</div>;
         }
 
         if (isLoggedIn) {
-            if (activeTab === 'Home') return <Home db={db} userId={userId} />;
-            if (activeTab === 'Cadastros') return <PlayerRegistration db={db} userId={userId} />;
-            if (activeTab === 'Painel de Controlo') return <GameControlPanel db={db} userId={userId} />;
-            if (activeTab === 'Finanças') return <Finances db={db} userId={userId} />;
-            if (activeTab === 'Créditos') return <CreditManagement db={db} userId={userId} />;
-            if (activeTab === 'Compartilhar Pagamento') return <SharePayment db={db} userId={userId} />;
+            switch (activeTab) {
+                case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} />;
+                case 'Cadastros': return <PlayerRegistration db={db} userId={userId} />;
+                case 'Painel de Controlo': return <GameControlPanel db={db} userId={userId} activeGameId={activeGameId} createFirstGame={createFirstGame} />;
+                case 'Finanças': return <Finances db={db} userId={userId} activeGameId={activeGameId} />;
+                case 'Créditos': return <CreditManagement db={db} userId={userId} activeGameId={activeGameId} />;
+                case 'Compartilhar Pagamento': return <SharePayment db={db} userId={userId} />;
+            }
         }
-
-        // Abas públicas ou quando logado
-        if (activeTab === 'Pagamentos') return <PaymentControlList db={db} userId={userId} />;
-        if (activeTab === 'Divisão de Times') return <TeamDivision db={db} userId={userId} />;
-        if (activeTab === 'Cronômetro') return <Stopwatch />;
         
-        // Se nenhuma aba corresponder (ex: URL inválida), mostra a página padrão
-        return <PaymentControlList db={db} userId={userId} />;
+        switch (activeTab) {
+            case 'Pagamentos': return <PaymentControlList db={db} activeGameId={activeGameId} />;
+            case 'Divisão de Times': return <TeamDivision db={db} userId={userId} activeGameId={activeGameId} />;
+            case 'Cronômetro': return <Stopwatch />;
+            default: return isLoggedIn ? <Home db={db} userId={userId} navigateTo={navigateTo} /> : <PaymentControlList db={db} activeGameId={activeGameId} />;
+        }
     };
 
     const MenuItem = ({ tabName, icon }) => (
@@ -1573,6 +1798,52 @@ const EditContactModal = ({ player, onSave, onCancel }) => {
         </div>
     );
 };
+
+// --- NOVO Componente Modal para Editar Nome na Partida ---
+const EditPlayerNameModal = ({ player, onSave, onCancel }) => {
+    const [newName, setNewName] = useState(player.name);
+    const modalRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (modalRef.current && !modalRef.current.contains(event.target)) {
+                onCancel();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [onCancel]);
+
+    const handleSave = () => {
+        if (newName.trim()) {
+            onSave(player.id, newName);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center p-4 z-40">
+            <div ref={modalRef} className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                <h3 className="text-xl font-bold mb-4 text-center">Editar Nome na Partida</h3>
+                <div className="space-y-4">
+                    <input 
+                        type="text" 
+                        value={newName} 
+                        onChange={(e) => setNewName(e.target.value)} 
+                        placeholder="Nome do jogador" 
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="mt-6 flex justify-end gap-4">
+                    <button type="button" onClick={onCancel} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="button" onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Salvar</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 // --- Componente Modal de Confirmação para Dividir Times ---
 const RedivideConfirmationModal = ({ onConfirm, onCancel }) => {
