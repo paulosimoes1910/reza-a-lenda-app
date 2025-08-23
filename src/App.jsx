@@ -128,7 +128,7 @@ const Home = ({ db, userId, navigateTo, isLoggedIn }) => {
 
     const paidPlayers = gamePlayers.filter(p => p.paymentStatus.startsWith('Pago'));
     const pendingPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pendente');
-    const creditPlayers = gamePlayers.filter(p => p.paymentStatus === 'Pago' && !p.played);
+    const creditPlayers = gamePlayers.filter(p => p.paymentStatus.startsWith('Pago') && !p.played);
 
     const totals = transactions.reduce((acc, t) => {
         const amount = t.amount || 0;
@@ -458,6 +458,19 @@ const GameControlPanel = ({ db, userId, activeGameId, createFirstGame }) => {
         // 4. Update active game status
         const statusRef = doc(db, "app_status", "status");
         batch.update(statusRef, { activeGameId: newGameRef.id });
+        
+        // 5. Add new expense for the new game
+        const fieldValue = parseFloat(paymentInfo?.fieldValue?.replace(',', '.') || '0');
+        if (fieldValue > 0) {
+            const newTransactionRef = doc(collection(db, "transactions"));
+            batch.set(newTransactionRef, {
+                description: "Aluguel do Campo",
+                amount: fieldValue,
+                type: 'expense',
+                createdAt: serverTimestamp(),
+                gameId: newGameRef.id
+            });
+        }
     
         try {
             await batch.commit();
@@ -607,7 +620,7 @@ const GameControlPanel = ({ db, userId, activeGameId, createFirstGame }) => {
                         </li>
                     )) : <p className="text-center text-gray-500 py-4">Nenhum jogador na partida atual.</p>}
                 </ul>
-                {gamePlayers.length > 0 && (
+                {activeGameId && (
                     <button onClick={() => setModalState({ isOpen: true, message: "Tem a certeza que quer arquivar esta partida e iniciar uma nova?", onConfirm: archiveAndStartNewGame, onCancel: () => setModalState({ isOpen: false }), showCancel: true })} className="w-full mt-6 bg-red-500 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-600 transition-colors">
                         Arquivar e Iniciar Nova Partida
                     </button>
@@ -625,6 +638,7 @@ const Finances = ({ db, userId, activeGameId }) => {
     const [expenseAmount, setExpenseAmount] = useState('');
     const [allTransactions, setAllTransactions] = useState([]);
     const [gameToDelete, setGameToDelete] = useState(null);
+    const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
     useEffect(() => {
         if (!userId) return;
@@ -715,6 +729,27 @@ const Finances = ({ db, userId, activeGameId }) => {
         }
     };
 
+    const handleResetBalance = async () => {
+        if (overallBalance === 0) {
+            setIsResetModalOpen(false);
+            return;
+        }
+    
+        try {
+            await addDoc(collection(db, "transactions"), {
+                description: "Saldo Zerado",
+                amount: overallBalance,
+                type: 'expense',
+                createdAt: serverTimestamp(),
+                gameId: 'geral' 
+            });
+        } catch (error) {
+            console.error("Erro ao zerar o saldo: ", error);
+        } finally {
+            setIsResetModalOpen(false);
+        }
+    };
+
     const overallTotals = allTransactions.reduce((acc, t) => {
         const amount = t.amount || 0;
         if (t.type === 'income') acc.income += amount;
@@ -727,11 +762,24 @@ const Finances = ({ db, userId, activeGameId }) => {
     return (
         <div className="p-4 md:p-6">
             {gameToDelete && <ConfirmationModal message={`Tem a certeza que quer apagar a partida de ${new Date(gameToDelete.createdAt?.toDate()).toLocaleDateString('pt-BR')}? Esta ação é irreversível.`} onConfirm={confirmDeleteGame} onCancel={() => setGameToDelete(null)} />}
+            {isResetModalOpen && <ConfirmationModal message={`Tem a certeza que quer zerar o saldo em caixa? Será criada uma despesa de £${overallBalance.toFixed(2)}.`} onConfirm={handleResetBalance} onCancel={() => setIsResetModalOpen(false)} />}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão Financeira</h2>
             
             <div className="bg-blue-100 p-4 rounded-lg shadow-sm text-center mb-8">
-                <p className="text-sm text-blue-700">Saldo Geral em Caixa</p>
-                <p className="text-3xl font-bold text-blue-800">£{overallBalance.toFixed(2)}</p>
+                <div className="flex justify-center items-center gap-4">
+                    <div>
+                        <p className="text-sm text-blue-700">Saldo Geral em Caixa</p>
+                        <p className="text-3xl font-bold text-blue-800">£{overallBalance.toFixed(2)}</p>
+                    </div>
+                    <button 
+                        onClick={() => { if (overallBalance !== 0) setIsResetModalOpen(true); }}
+                        disabled={overallBalance === 0}
+                        className="p-2 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Zerar Saldo em Caixa"
+                    >
+                        <TrashIcon />
+                    </button>
+                </div>
             </div>
 
             <div className="bg-white p-4 rounded-lg shadow-sm border mb-8">
@@ -1620,23 +1668,25 @@ export default function App() {
             return <div className="p-4 text-center">Nenhuma partida ativa no momento.</div>;
         }
 
+        const commonProps = { db, userId, activeGameId };
+
         if (isLoggedIn) {
             switch (activeTab) {
-                case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
-                case 'Cadastros': return <PlayerRegistration db={db} userId={userId} />;
-                case 'Painel de Controlo': return <GameControlPanel db={db} userId={userId} activeGameId={activeGameId} createFirstGame={createFirstGame} />;
-                case 'Finanças': return <Finances db={db} userId={userId} activeGameId={activeGameId} />;
-                case 'Créditos': return <CreditManagement db={db} userId={userId} activeGameId={activeGameId} />;
-                case 'Compartilhar Pagamento': return <SharePayment db={db} userId={userId} />;
+                case 'Home': return <Home {...commonProps} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
+                case 'Cadastros': return <PlayerRegistration {...commonProps} />;
+                case 'Painel de Controlo': return <GameControlPanel {...commonProps} createFirstGame={createFirstGame} />;
+                case 'Finanças': return <Finances {...commonProps} />;
+                case 'Créditos': return <CreditManagement {...commonProps} />;
+                case 'Compartilhar Pagamento': return <SharePayment {...commonProps} />;
             }
         }
         
         switch (activeTab) {
-            case 'Home': return <Home db={db} userId={userId} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
+            case 'Home': return <Home {...commonProps} navigateTo={navigateTo} isLoggedIn={isLoggedIn} />;
             case 'Pagamentos': return <PaymentControlList db={db} activeGameId={activeGameId} />;
-            case 'Divisão de Times': return <TeamDivision db={db} userId={userId} activeGameId={activeGameId} />;
+            case 'Divisão de Times': return <TeamDivision {...commonProps} />;
             case 'Cronômetro': return <Stopwatch />;
-            default: return isLoggedIn ? <Home db={db} userId={userId} navigateTo={navigateTo} /> : <PaymentControlList db={db} activeGameId={activeGameId} />;
+            default: return isLoggedIn ? <Home {...commonProps} navigateTo={navigateTo} isLoggedIn={isLoggedIn} /> : <PaymentControlList db={db} activeGameId={activeGameId} />;
         }
     };
 
