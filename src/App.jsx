@@ -122,7 +122,14 @@ const Home = ({ db, userId, navigateTo, isLoggedIn }) => {
         message += `\n\nDetalhes de Pagamento\nSort Cod: 20-26-82\nAccount : 23638502\nPaulo Simoes de Souza`;
         message += `\n\nDepois de fazer a transferência, clica nesse Link https://rezaalenda.netlify.app para confirmar o seu pagamento.\n\nObrigado!!!`;
 
-        const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let whatsappUrl;
+
+        if (isMobile) {
+            whatsappUrl = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
+        } else {
+            whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+        }
         window.open(whatsappUrl, '_blank');
     };
 
@@ -639,6 +646,8 @@ const Finances = ({ db, userId, activeGameId }) => {
     const [allTransactions, setAllTransactions] = useState([]);
     const [gameToDelete, setGameToDelete] = useState(null);
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+    const [isFullResetModalOpen, setIsFullResetModalOpen] = useState(false);
+
 
     useEffect(() => {
         if (!userId) return;
@@ -750,6 +759,26 @@ const Finances = ({ db, userId, activeGameId }) => {
         }
     };
 
+    const handleFullReset = async () => {
+        const batch = writeBatch(db);
+
+        // Delete all transactions
+        const transSnapshot = await getDocs(collection(db, "transactions"));
+        transSnapshot.forEach(doc => batch.delete(doc.ref));
+
+        // Delete all credits
+        const creditsSnapshot = await getDocs(collection(db, "credits"));
+        creditsSnapshot.forEach(doc => batch.delete(doc.ref));
+
+        try {
+            await batch.commit();
+        } catch(e) {
+            console.error("Error during full financial reset:", e);
+        } finally {
+            setIsFullResetModalOpen(false);
+        }
+    };
+
     const overallTotals = allTransactions.reduce((acc, t) => {
         const amount = t.amount || 0;
         if (t.type === 'income') acc.income += amount;
@@ -763,6 +792,7 @@ const Finances = ({ db, userId, activeGameId }) => {
         <div className="p-4 md:p-6">
             {gameToDelete && <ConfirmationModal message={`Tem a certeza que quer apagar a partida de ${new Date(gameToDelete.createdAt?.toDate()).toLocaleDateString('pt-BR')}? Esta ação é irreversível.`} onConfirm={confirmDeleteGame} onCancel={() => setGameToDelete(null)} />}
             {isResetModalOpen && <ConfirmationModal message={`Tem a certeza que quer zerar o saldo em caixa? Será criada uma despesa de £${overallBalance.toFixed(2)}.`} onConfirm={handleResetBalance} onCancel={() => setIsResetModalOpen(false)} />}
+            {isFullResetModalOpen && <ConfirmationModal message={`Esta ação irá apagar TODAS as transações e créditos. O saldo será zerado permanentemente. Deseja continuar?`} onConfirm={handleFullReset} onCancel={() => setIsFullResetModalOpen(false)} />}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Gestão Financeira</h2>
             
             <div className="bg-blue-100 p-4 rounded-lg shadow-sm text-center mb-8">
@@ -774,10 +804,10 @@ const Finances = ({ db, userId, activeGameId }) => {
                     <button 
                         onClick={() => { if (overallBalance !== 0) setIsResetModalOpen(true); }}
                         disabled={overallBalance === 0}
-                        className="p-2 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Zerar Saldo em Caixa"
+                        className="p-2 rounded-full bg-yellow-100 text-yellow-600 hover:bg-yellow-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Zerar Saldo em Caixa (Cria Despesa)"
                     >
-                        <TrashIcon />
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 13V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"/><line x1="16" y1="5" x2="16" y2="11"/><path d="M12 5h-1a2 2 0 0 0-2 2v2"/><path d="m21.5 16.5-2-2-2 2"/><path d="m17.5 14.5 2 2 2-2"/></svg>
                     </button>
                 </div>
             </div>
@@ -816,6 +846,15 @@ const Finances = ({ db, userId, activeGameId }) => {
                     </div>
                 </div>
             )}
+             <div className="mt-8 pt-4 border-t-2 border-dashed border-red-300">
+                <button 
+                    onClick={() => setIsFullResetModalOpen(true)}
+                    className="w-full bg-red-800 text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:bg-red-900 transition-colors"
+                >
+                    Zerar Histórico Financeiro
+                </button>
+                <p className="text-center text-xs text-gray-500 mt-2">CUIDADO: Esta ação apaga todas as transações e créditos permanentemente.</p>
+             </div>
         </div>
     );
 };
@@ -910,7 +949,7 @@ const CreditManagement = ({ db, userId, activeGameId }) => {
         const creditAmount = credit.amount || 0;
         const newBalance = creditAmount - currentGameCost;
         const confirmationMessage = `Deseja usar £${currentGameCost.toFixed(2)} do crédito de ${credit.name}?\n\n` +
-                                  `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
+                                      `O novo saldo de crédito será: £${newBalance.toFixed(2)}.`;
 
         setModalState({ isOpen: true, message: confirmationMessage, onConfirm: () => { setModalState({ isOpen: false }); performCreditUpdate(); }, onCancel: () => setModalState({ isOpen: false }), showCancel: true });
     };
@@ -1233,12 +1272,15 @@ Obrigado!!!`;
     const handleWhatsAppShare = () => {
         const message = generateMessage();
         
-        if (window.AndroidBridge && typeof window.AndroidBridge.openWhatsApp === 'function') {
-            window.AndroidBridge.openWhatsApp("", message);
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let whatsappUrl;
+
+        if (isMobile) {
+            whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
         } else {
-            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-            window.open(whatsappUrl, '_blank');
+            whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
         }
+        window.open(whatsappUrl, '_blank');
     };
 
     return (
@@ -1465,6 +1507,7 @@ const TeamDivision = ({ db, userId, activeGameId }) => {
     const [loading, setLoading] = useState(true);
     const [hasBeenDivided, setHasBeenDivided] = useState(false);
     const [isRedivideModalOpen, setIsRedivideModalOpen] = useState(false);
+    const [gameMode, setGameMode] = useState('7x7'); // Default state for game mode
     
     useEffect(() => {
         if (!activeGameId) {
@@ -1504,11 +1547,16 @@ const TeamDivision = ({ db, userId, activeGameId }) => {
     const performDivision = async () => {
         const shuffledPlayers = [...gamePlayers].sort(() => Math.random() - 0.5);
         const newTeams = { red: [], yellow: [], green: [] };
-        shuffledPlayers.forEach((player, index) => {
-            if (index % 3 === 0) newTeams.red.push(player);
-            else if (index % 3 === 1) newTeams.yellow.push(player);
-            else newTeams.green.push(player);
-        });
+        
+        // Define team limit based on selection
+        const limit = gameMode === '7x7' ? 7 : 5;
+
+        // Fill Yellow and Red teams to the limit
+        newTeams.yellow = shuffledPlayers.slice(0, limit);
+        newTeams.red = shuffledPlayers.slice(limit, limit * 2);
+        
+        // Everyone else goes to Green
+        newTeams.green = shuffledPlayers.slice(limit * 2);
         
         try {
             const dividedTeamsDocPath = `games/${activeGameId}/division/teams`;
@@ -1530,7 +1578,7 @@ const TeamDivision = ({ db, userId, activeGameId }) => {
 
     const TeamColumn = ({ title, players, color }) => (
         <div className={`rounded-lg p-4 ${color}`}>
-            <h3 className="text-xl font-bold text-white text-center mb-3">{title}</h3>
+            <h3 className="text-xl font-bold text-white text-center mb-3">{title} ({players.length})</h3>
             <ul className="space-y-2">
                 {players.map(player => (
                     <li key={player.id} className="bg-white/90 text-gray-800 p-2 rounded-md text-center font-medium">
@@ -1550,6 +1598,22 @@ const TeamDivision = ({ db, userId, activeGameId }) => {
                 />
             )}
             <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Divisão de Times</h2>
+            
+            <div className="flex justify-center gap-4 mb-4">
+                <button
+                    onClick={() => setGameMode('7x7')}
+                    className={`px-4 py-2 rounded-full font-bold transition-all ${gameMode === '7x7' ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                >
+                    7 vs 7
+                </button>
+                <button
+                    onClick={() => setGameMode('5x5')}
+                    className={`px-4 py-2 rounded-full font-bold transition-all ${gameMode === '5x5' ? 'bg-indigo-600 text-white shadow-lg scale-105' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                >
+                    5 vs 5
+                </button>
+            </div>
+
             <div className="mb-6">
                 <button onClick={handleDivideClick} disabled={gamePlayers.length === 0} className="w-full bg-indigo-600 text-white font-semibold px-6 py-4 rounded-lg shadow-md hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     <ShuffleIcon /> {hasBeenDivided ? "Dividir Novamente" : "Dividir Times"}
@@ -1558,8 +1622,8 @@ const TeamDivision = ({ db, userId, activeGameId }) => {
             {loading ? <p className="text-center text-gray-500">Carregando jogadores da partida...</p> :
             (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <TeamColumn title="Time Vermelho" players={teams.red} color="bg-red-500" />
                     <TeamColumn title="Time Amarelo" players={teams.yellow} color="bg-yellow-500" />
+                    <TeamColumn title="Time Vermelho" players={teams.red} color="bg-red-500" />
                     <TeamColumn title="Time Verde" players={teams.green} color="bg-green-500" />
                 </div>
             )}
